@@ -1,0 +1,177 @@
+---
+title: "Getting Started with fastclogit"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with fastclogit}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(fastclogit)
+```
+
+## Overview
+
+`fastclogit` estimates conditional logit (McFadden's choice) models using a
+memory-efficient Rcpp implementation. It is designed as a drop-in replacement
+for `survival::clogit()` when your data is too large to fit in memory with
+the standard approach.
+
+The key difference: `clogit()` builds the full design matrix via
+`model.matrix()`, which duplicates your data in memory. For a 90-million-row
+dataset, this can require 80--120 GB of RAM. `fastclogit` builds the design
+matrix column-by-column and passes it directly to C++, using roughly 5--10x
+less memory.
+
+## Simulating data
+
+The package includes a data generator that creates synthetic discrete choice
+data with the structure commonly used in partner choice research:
+
+```{r simulate}
+sim <- simulate_clogit_data(
+  n_egos  = 1000,   # number of choice sets
+  n_alts  = 50,     # alternatives per choice set
+  use_offset = TRUE, # McFadden/Manski sampling correction
+  seed    = 42
+)
+
+str(sim$data[1:5, ])
+```
+
+Each ego (chooser) has `n_alts` alternatives. Exactly one alternative per
+choice set has `choice = 1`. The `correction` column contains the
+McFadden/Manski offset that adjusts for stratified sampling.
+
+## Fitting a model
+
+### Formula interface (recommended)
+
+```{r fclogit}
+fit <- fclogit(
+  choice ~ lnDist + n_years_same_cfar + n_years_same_peorg + n_years_same_uni,
+  data    = sim$data,
+  strata  = "strata_id",
+  cluster = "cluster_id",
+  offset  = "correction"
+)
+
+summary(fit)
+```
+
+The formula works just like in `lm()` or `glm()`. Factor variables are
+automatically dummy-coded (dropping the first level as reference).
+Interactions are supported with the `:` operator.
+
+### Matrix interface
+
+If you prefer to construct the design matrix yourself:
+
+```{r matrix-interface}
+fit2 <- fastclogit(
+  X       = sim$X,
+  choice  = sim$choice,
+  strata  = sim$strata,
+  offset  = sim$offset,
+  cluster = sim$cluster
+)
+
+# Same coefficients
+all.equal(coef(fit2), sim$beta_true, tolerance = 0.3)
+```
+
+## Extracting results
+
+Standard S3 methods work as expected:
+
+```{r methods}
+coef(fit)
+confint(fit)
+tidy_fastclogit(fit)  # broom-style data.frame
+```
+
+By default, `summary()`, `confint()`, and `tidy_fastclogit()` use clustered
+robust standard errors when available. Pass `robust = FALSE` to use
+model-based SEs instead.
+
+## KHB mediation decomposition
+
+The KHB method (Kohler, Karlson & Holm 2011) decomposes total effects into
+direct and indirect (mediated) effects in nonlinear models. This is useful
+when you want to know how much of variable X's effect operates through
+mediator Z.
+
+```{r khb}
+# Create data with a known mediation structure
+set.seed(123)
+n_egos <- 500; n_alts <- 30; n <- n_egos * n_alts
+
+d <- data.frame(
+  strata_id = rep(1:n_egos, each = n_alts),
+  x = rnorm(n),
+  c1 = rnorm(n)
+)
+d$z <- 0.6 * d$x + rnorm(n)  # z is mediated by x (gamma = 0.6)
+eta <- 0.5 * d$x + 0.8 * d$z + 0.3 * d$c1
+
+# Generate choices
+d$choice <- 0L
+for (i in 1:n_egos) {
+  rows <- ((i-1)*n_alts + 1):(i*n_alts)
+  probs <- exp(eta[rows] - max(eta[rows]))
+  probs <- probs / sum(probs)
+  d$choice[rows[sample(n_alts, 1, prob = probs)]] <- 1L
+}
+
+result <- khb_decompose(
+  data     = d,
+  key_vars = "x",
+  z_vars   = "z",
+  controls = "c1",
+  strata   = "strata_id",
+  choice   = "choice",
+  verbose  = FALSE
+)
+
+result$decomposition
+```
+
+The indirect effect captures the portion of x's effect that operates through
+z. The confounding percentage tells you what fraction of x's total effect is
+mediated.
+
+## Comparison with survival::clogit
+
+If you have `survival` installed, you can verify that `fastclogit` produces
+the same estimates:
+
+```{r compare, eval = requireNamespace("survival", quietly = TRUE)}
+library(survival)
+sim_small <- simulate_clogit_data(n_egos = 200, n_alts = 20, seed = 1)
+
+# fastclogit
+fit_fast <- fastclogit(sim_small$X, sim_small$choice, sim_small$strata,
+                        offset = sim_small$offset, cluster = sim_small$cluster)
+
+# survival::clogit
+d <- sim_small$data
+d$strata_id <- factor(d$strata_id)
+d$cluster_id <- factor(d$cluster_id)
+fit_clogit <- clogit(
+  choice ~ lnDist + n_years_same_cfar + n_years_same_peorg + n_years_same_uni +
+    Edudiff3_BothHigh + Edudiff3_BothLow + Edudiff3_Missing +
+    AgeDiffcat_2 + AgeDiffcat_3 + AgeDiffcat_4 + AgeDiffcat_5 +
+    offset(correction) + strata(strata_id) + cluster(cluster_id),
+  data = d
+)
+
+# Compare coefficients
+data.frame(
+  term = names(coef(fit_fast)),
+  fastclogit = round(coef(fit_fast), 6),
+  clogit = round(coef(fit_clogit), 6),
+  diff = round(coef(fit_fast) - coef(fit_clogit), 10)
+)
+```

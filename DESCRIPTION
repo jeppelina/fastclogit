@@ -1,0 +1,23 @@
+Package: fastclogit
+Type: Package
+Title: Fast Conditional Logit for Large-Scale Choice Data
+Version: 0.2.0
+Authors@R: person("Jesper", "Lindmarker", email = "jesper.lindmarker@gmail.com",
+                  role = c("aut", "cre"))
+Description: Memory-efficient conditional logit estimation using Rcpp, designed
+    for large-scale discrete choice models with millions to hundreds of millions
+    of rows. Features include a formula interface with automatic factor
+    expansion, McFadden/Manski sampling correction offsets, clustered sandwich
+    standard errors, collinearity detection, and KHB mediation decomposition
+    (Kohler, Karlson & Holm, 2011). Avoids the model.frame/model.matrix memory
+    duplication that makes survival::clogit() infeasible on large datasets.
+URL: https://github.com/jlindmarker/fastclogit
+BugReports: https://github.com/jlindmarker/fastclogit/issues
+License: MIT + file LICENSE
+Encoding: UTF-8
+Imports: Rcpp (>= 1.0.0), stats
+LinkingTo: Rcpp, RcppArmadillo
+Suggests: survival, data.table, testthat (>= 3.0.0), knitr, rmarkdown
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+RoxygenNote: 7.3.3
