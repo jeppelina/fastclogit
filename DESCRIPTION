@@ -1,7 +1,7 @@
 Package: fastclogit
 Type: Package
 Title: Fast Conditional Logit for Large-Scale Choice Data
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: person("Jesper", "Lindmarker", email = "jesper.lindmarker@gmail.com",
                   role = c("aut", "cre"))
 Description: Memory-efficient conditional logit estimation using Rcpp, designed
@@ -9,10 +9,12 @@ Description: Memory-efficient conditional logit estimation using Rcpp, designed
     of rows. Features include a formula interface with automatic factor
     expansion, McFadden/Manski sampling correction offsets, clustered sandwich
     standard errors, collinearity detection, and KHB mediation decomposition
-    (Kohler, Karlson & Holm, 2011). Avoids the model.frame/model.matrix memory
-    duplication that makes survival::clogit() infeasible on large datasets.
-URL: https://github.com/jlindmarker/fastclogit
-BugReports: https://github.com/jlindmarker/fastclogit/issues
+    (Kohler, Karlson & Holm, 2011). The Newton-Raphson optimizer uses three-tier
+    convergence (gradient norm, relative log-likelihood, stall detection) for
+    robust convergence on very large datasets. Avoids the model.frame/model.matrix
+    memory duplication that makes survival::clogit() infeasible on large datasets.
+URL: https://github.com/jeppelina/fastclogit
+BugReports: https://github.com/jeppelina/fastclogit/issues
 License: MIT + file LICENSE
 Encoding: UTF-8
 Imports: Rcpp (>= 1.0.0), stats

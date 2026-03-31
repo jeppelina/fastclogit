@@ -10,8 +10,8 @@ Memory-efficient conditional logit estimation using Rcpp, designed for large-sca
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/jlindmarker/fastclogit}
-  \item Report bugs at \url{https://github.com/jlindmarker/fastclogit/issues}
+  \item \url{https://github.com/jeppelina/fastclogit}
+  \item Report bugs at \url{https://github.com/jeppelina/fastclogit/issues}
 }
 
 }

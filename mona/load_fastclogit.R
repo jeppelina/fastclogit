@@ -8,21 +8,17 @@
 ####   source("load_fastclogit.R")
 ####
 #### Required files in the same directory:
-####   clogit_newton.cpp      (Newton-Raphson with ridge regularization)
+####   clogit_newton.cpp      (Newton-Raphson with three-tier convergence)
 ####   clogit_sandwich.cpp    (Clustered sandwich variance estimation)
 ####   fastclogit.R           (Core: matrix-level fitting function)
 ####   fastclogit_methods.R   (S3 methods: summary, print, vcov, confint, tidy)
 ####   fclogit.R              (Formula interface: fclogit())
-####   simulate_clogit.R      (DGP for testing — optional)
-####
-#### Optional files:
 ####   khb_decompose.R        (Generic KHB mediation decomposition)
-####   fastclogit_pure.R      (Pure-R fallback if Rcpp is not available)
+####
+#### Optional files (in archive/ subfolder):
+####   simulate_clogit.R      (DGP for testing)
 ####
 #### Dependencies: Rcpp, RcppArmadillo (both available on MONA / SCB servers)
-####
-#### If Rcpp is NOT available, source fastclogit_pure.R instead of this file.
-#### It provides the same interface but runs in pure R (slower, no compiler).
 ###############################################################################
 
 cat("=== Loading fastclogit (sourceCpp mode) ===\n")
@@ -44,14 +40,14 @@ cat("  Directory:", FASTCLOGIT_DIR, "\n")
 cat("  Checking Rcpp... ")
 if (!requireNamespace("Rcpp", quietly = TRUE)) {
   stop("Rcpp is not installed. Ask SCB to install it, or try: install.packages('Rcpp')\n",
-       "Alternatively, source('fastclogit_pure.R') for a pure-R version (no Rcpp needed).")
+       "Rcpp and RcppArmadillo are required on MONA.")
 }
 cat(as.character(packageVersion("Rcpp")), "\n")
 
 cat("  Checking RcppArmadillo... ")
 if (!requireNamespace("RcppArmadillo", quietly = TRUE)) {
   stop("RcppArmadillo is not installed. Ask SCB to install it, or try: install.packages('RcppArmadillo')\n",
-       "Alternatively, source('fastclogit_pure.R') for a pure-R version (no Rcpp needed).")
+       "Rcpp and RcppArmadillo are required on MONA.")
 }
 cat(as.character(packageVersion("RcppArmadillo")), "\n")
 
@@ -93,8 +89,10 @@ cat("  Sourced: fastclogit.R (core fitting function)\n")
 # Formula interface
 .source_if_exists("fclogit.R", "fclogit.R (formula interface)")
 
-# DGP simulator
-.source_if_exists("simulate_clogit.R", "simulate_clogit.R (data simulator)")
+# DGP simulator (check archive/ subfolder too)
+if (!.source_if_exists("simulate_clogit.R", "simulate_clogit.R (data simulator)")) {
+  .source_if_exists("archive/simulate_clogit.R", "archive/simulate_clogit.R (data simulator)")
+}
 
 # KHB decomposition
 .source_if_exists("khb_decompose.R", "khb_decompose.R (KHB mediation)")

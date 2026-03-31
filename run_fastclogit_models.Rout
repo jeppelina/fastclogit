@@ -1,0 +1,1878 @@
+
+R version 4.5.3 (2026-03-11 ucrt) -- "Reassured Reassurer"
+Copyright (C) 2026 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
++----------------------------------------------------------+
+|                        __              __                |
+|       /\ |_  _    |_  |__)  . _   |\/|/  \|\ | /\        |
+|      /--\|_)(_)|_||_  | \   || )  |  |\__/| \|/--\       |
+|                                                          |
+|   MONA has a local CRAN-mirror that is used by default.  |
+|    You can install packages with install.packages();     |
+|  Packages you install remain installed for your account  |
+|        across R sessions (batch or interactive).         |
+|                                                          |
+| Reinstalling a package that is loaded by another of your |
+|  R sessions (batch or interactive) may cause an error.   |
+|    If that happens you must close all your R sessions    |
+|             and reinstall the package again.             |
+|                                                          |
++----------------------------------------------------------+
+
+> ###############################################################################
+> #### Partner Choice Models — fastclogit version
+> #### Author: Jesper Lindmarker
+> ####
+> #### Drop-in replacement for run_clogit_models.R using fastclogit.
+> #### Sources the same config.R / loaders.R and produces identical output format.
+> ####
+> #### Usage on MONA:
+> ####   1. Set SCRIPT_DIR below to match your Git/Code folder on MONA
+> ####   2. Ensure fastclogit files are in the working directory (or installed):
+> ####      - clogit_newton.cpp, clogit_sandwich.cpp, fastclogit.R,
+> ####        fastclogit_methods.R, load_fastclogit.R
+> ####   3. Run: source("run_fastclogit_models.R")
+> ####   4. Output CSVs and RDS files are tagged with "_fast" to avoid overwriting
+> ####
+> #### What's different from run_clogit_models.R:
+> ####   - clogit() replaced with fastclogit() via run_clogit_fast()
+> ####   - Design matrix built column-by-column (no model.matrix / model.frame)
+> ####   - Selective fst column loading (~18 of 117 columns)
+> ####   - QR-based collinearity detection with dropped-column tracking
+> ####   - Column scaling for continuous predictors (sd > 1, non-binary)
+> ####   - Adaptive ridge regularization in Newton-Raphson (via clogit_newton.cpp)
+> ####   - tidy_clogit() replaced with tidy_fastclogit_result() (same output cols)
+> ####   - KHB decomposition ported to fastclogit (via khb_fastclogit.R)
+> ####   - Memory: ~23 GB peak (down from ~120 GB with survival::clogit)
+> ####
+> #### Key memory optimizations:
+> ####   1. Selective fst loading: only ~18 needed columns (saves ~40 GB)
+> ####   2. Column-by-column design matrix: avoids model.matrix() copy (~30 GB)
+> ####   3. Filter-only columns dropped after filtering
+> ####   4. Source data freed inside run_clogit_fast() after building X
+> ####   5. data.table freed after last model in main loop
+> ###############################################################################
+> 
+> 
+> ###############################################################################
+> ####                           DEPENDENCIES                                ####
+> ###############################################################################
+> 
+> SCRIPT_DIR <- "//micro.intra/projekt/P0515$/P0515_Gem/Jesper/Intermarriage/Git/Code"
+> setwd(SCRIPT_DIR)
+> 
+> library(data.table)
+> 
+> # Load fastclogit — try installed package first, fall back to sourceCpp (MONA)
+> if (requireNamespace("fastclogit", quietly = TRUE)) {
++   library(fastclogit)
++ } else {
++   source("load_fastclogit.R")
++ }
+=== Loading fastclogit (sourceCpp mode) ===
+  Directory: \\micro.intra/projekt/P0515$/P0515_Gem/Jesper/Intermarriage/Git/Code 
+  Checking Rcpp... 1.0.14 
+  Checking RcppArmadillo... 15.2.3.1 
+  Compiling clogit_newton.cpp... OK
+  Compiling clogit_sandwich.cpp... OK
+  Sourced: fastclogit.R
+  Sourced: summary.R
+  Sourced: simulate_clogit.R
+  Sanity check: PASS (11 coefs, loglik = -97.14)
+=== fastclogit ready ===
+
+> 
+> # KHB decomposition (fastclogit version — no survival:: needed)
+> source("khb_fastclogit.R")
+> 
+> 
+> ###############################################################################
+> ####                     LOAD SHARED CONFIGURATION                         ####
+> ###############################################################################
+> 
+> # Source the same config.R used by run_clogit_models.R
+> # This gives us: BASE_PATH, DATA_PATH, OUTPUT_PATH, years, b, a,
+> #                stratified_sampling, strata_samples, build_config_tag(), etc.
+> source("config.R")
+[2026-03-29 21:57:01] config.R loaded successfully
+[2026-03-29 21:57:01]   DATA_PATH: //micro.intra/projekt/P0515$/P0515_Gem/Jesper/Intermarriage/Data
+[2026-03-29 21:57:01]   CODE_PATH: //micro.intra/projekt/P0515$/P0515_Gem/Jesper/Intermarriage/Git/Code
+[2026-03-29 21:57:01]   Config tag: _strat_cohort_b100
+> source("loaders.R")
+Loading required package: fst
+[2026-03-29 21:57:03] loaders.R loaded successfully
+[2026-03-29 21:57:03]   Use load_data('name') to load with caching
+[2026-03-29 21:57:03]   Use save_fst(data, 'name') to save in fast format
+> 
+> 
+> ###############################################################################
+> ####                      CONFIG (same as original)                        ####
+> ###############################################################################
+> 
+> CONFIG <- list(
++   # --- SAMPLE SELECTION ---
++   testdata = "",
++   run_for_sex = c("women", "men"),
++   fullpopsample = FALSE,
++   samelan = TRUE,
++   earliestyr = 1991,
++   latestyr = 2019,
++   age_range = c(17, 45),
++   population = "all",
++   b = 100,
++ 
++   # --- EDUCATION ---
++   edu_var = "Edudiff3",
++ 
++   # --- MODELS ---
++   models_to_run = c(4, 5),
++ 
++   # --- RUN CONTROL ---
++   run_models = TRUE,
++   run_khb = TRUE,  # KHB decomposition via fastclogit (no survival:: needed)
++ 
++   # --- KHB ---
++   khb_variable = "Edudiff3",
++   khb_comparisons = list(c("0", "4"), c("1", "4"), c("2", "4"), c("3", "4")),
++ 
++   # --- STRATIFIED ---
++   run_stratified_by_ancestry = FALSE,
++   ancestry_groups = NULL,
++   stratified_models = c(3),
++ 
++   # --- OUTPUT ---
++   report_odds_ratios = TRUE,
++   save_model_objects = FALSE,  # fastclogit objects are tiny, but off by default
++   verbose = TRUE
++ )
+> 
+> 
+> ###############################################################################
+> ####                        LOGGING                                        ####
+> ###############################################################################
+> 
+> log_msg <- function(...) {
++   if (CONFIG$verbose) cat(format(Sys.time(), "[%H:%M:%S] "), ..., "\n", sep = "")
++ }
+> 
+> log_memory <- function(label = "") {
++   gc_info <- gc(verbose = FALSE)
++   log_msg("  [Memory] ", label, ": ", round(gc_info[2, 2], 1), " MB")
++ }
+> 
+> 
+> ###############################################################################
+> ####                    FORMULA & MODEL SPECS                              ####
+> ####          (identical to run_clogit_models.R)                           ####
+> ###############################################################################
+> 
+> build_model_specs <- function(edu_var) {
++   # Education terms
++   edu_terms <- if (edu_var == "EduPairing_interact") {
++     c("EduAlter_3_fac",
++       "EduAlter_3_fac:EduEgoPostShort",
++       "EduAlter_3_fac:EduEgoPostLong")
++   } else {
++     edu_var
++   }
++ 
++   # Base controls (same across all models)
++   controls <- c("AgeDiffcat", "SameMicroAnc", "MesoNotMicro",
++                 "AlterFirstGen", "BothFirstGen")
++ 
++   f <- function(...) {
++     terms <- c(edu_terms, controls, ...)
++     as.formula(paste("actualpartner ~", paste(terms, collapse = " + ")))
++   }
++ 
++   list(
++     "0" = f(),
++     "1" = f("n_years_same_uni"),
++     "2" = f("n_years_same_uni", "n_years_same_cfar"),
++     "3" = f("n_years_same_uni", "n_years_same_cfar", "n_years_same_peorg"),
++     "4" = f("n_years_same_uni", "n_years_same_cfar", "n_years_same_peorg", "lnDist"),
++     "5" = f("n_years_same_uni",
++             "n_years_same_cfar", "ln_mean_cfar_size_c", "n_years_same_cfar:ln_mean_cfar_size_c",
++             "n_years_same_peorg", "ln_mean_peorg_size_c", "n_years_same_peorg:ln_mean_peorg_size_c",
++             "lnDist")
++   )
++ }
+> 
+> 
+> ###############################################################################
+> ####                  FACTOR PREPARATION                                   ####
+> ####          (identical to run_clogit_models.R)                           ####
+> ###############################################################################
+> 
+> prepare_factors <- function(dt) {
++   # AgeDiffcat: set reference level
++   if ("AgeDiffcat" %in% names(dt)) {
++     dt[, AgeDiffcat := relevel(factor(AgeDiffcat), ref = "Man 0-2yr older")]
++   }
++ 
++   # Edudiff3: set reference
++   if ("Edudiff3" %in% names(dt)) {
++     dt[, Edudiff3 := relevel(factor(Edudiff3), ref = "Different")]
++   }
++ 
++   # Bin n_years variables into 0/1/2/3+
++   for (col in c("n_years_same_uni", "n_years_same_cfar", "n_years_same_peorg")) {
++     if (col %in% names(dt)) {
++       dt[, (col) := factor(
++         fifelse(get(col) >= 3, "3+", as.character(get(col))),
++         levels = c("0", "1", "2", "3+")
++       )]
++     }
++   }
++ 
++   invisible(dt)
++ }
+> 
+> 
+> ###############################################################################
+> ####                 CORE: run_clogit_fast()                               ####
+> ####     The key replacement — uses fastclogit instead of clogit           ####
+> ###############################################################################
+> 
+> run_clogit_fast <- function(data, formula, group_var = "CoupleId",
++                              cluster_var = "LopNrEgo", use_offset = FALSE) {
++   #
++   # Takes the same inputs as the original run_clogit() but calls fastclogit.
++   #
++   # MEMORY-OPTIMIZED: builds design matrix column-by-column directly from
++   # data.table — NO model.matrix(), NO model.frame(), NO intermediate copies.
++   # This is the key difference from clogit() that saves ~60-80 GB.
++   #
++ 
++   # --- 1. Identify predictor variables from formula ---
++   formula_vars <- all.vars(formula)
++   predictor_vars <- setdiff(formula_vars, "actualpartner")
++ 
++   # Separate interaction terms from main effects
++   formula_terms <- attr(terms(formula), "term.labels")
++   interaction_terms <- formula_terms[grepl(":", formula_terms)]
++   main_terms <- formula_terms[!grepl(":", formula_terms)]
++ 
++   # Columns needed from data
++   all_vars_needed <- unique(c(
++     predictor_vars, group_var, cluster_var, "actualpartner",
++     if (use_offset) "correction"
++   ))
++   all_vars_needed <- intersect(all_vars_needed, names(data))
++ 
++   # --- 2. Drop NAs on needed columns (in-place filter via index) ---
++   complete_idx <- complete.cases(data[, ..all_vars_needed])
++   n_total <- sum(complete_idx)
++   n_dropped <- length(complete_idx) - n_total
++ 
++   if (n_dropped > 0) {
++     log_msg("    Dropped ", format(n_dropped, big.mark = ","), " rows with NAs")
++   }
++   log_msg("    Working with ", format(n_total, big.mark = ","), " rows")
++ 
++   # --- 3. Extract metadata vectors FIRST (before building X) ---
++   choice_vec  <- as.integer(data[["actualpartner"]][complete_idx])
++   strata_vec  <- data[[group_var]][complete_idx]
++   cluster_vec <- data[[cluster_var]][complete_idx]
++   offset_vec  <- if (use_offset && "correction" %in% names(data)) {
++     as.numeric(data[["correction"]][complete_idx])
++   } else {
++     NULL
++   }
++ 
++   log_memory("After extracting metadata vectors")
++ 
++   # --- 4. Build design matrix column-by-column (NO model.matrix) ---
++   # This avoids the model.frame copy that causes memory explosion.
++   # Factor columns → dummy columns; numeric columns → passed through.
++   X_cols <- list()
++   col_names <- character(0)
++ 
++   for (term in main_terms) {
++     col <- data[[term]][complete_idx]
++ 
++     if (is.factor(col) || is.character(col)) {
++       # Factor: create dummy columns (excluding reference = first level)
++       if (!is.factor(col)) col <- factor(col)
++       levs <- levels(col)
++       ref_level <- levs[1]
++       col_int <- as.integer(col)  # integer codes, 1-based
++ 
++       for (k in 2:length(levs)) {
++         dummy <- as.numeric(col_int == k)
++         X_cols[[length(X_cols) + 1]] <- dummy
++         col_names <- c(col_names, paste0(term, levs[k]))
++       }
++       rm(col, col_int, dummy)
++     } else {
++       # Numeric: pass through directly
++       X_cols[[length(X_cols) + 1]] <- as.numeric(col)
++       col_names <- c(col_names, term)
++       rm(col)
++     }
++   }
++ 
++   # Handle interaction terms (e.g., "n_years_same_cfar:ln_mean_cfar_size_c")
++   for (iterm in interaction_terms) {
++     parts <- strsplit(iterm, ":")[[1]]
++     if (length(parts) != 2) {
++       log_msg("    WARNING: skipping interaction with != 2 terms: ", iterm)
++       next
++     }
++ 
++     col1 <- data[[parts[1]]][complete_idx]
++     col2 <- data[[parts[2]]][complete_idx]
++ 
++     # Both factor: cross all non-reference levels
++     if ((is.factor(col1) || is.character(col1)) &&
++         (is.factor(col2) || is.character(col2))) {
++       if (!is.factor(col1)) col1 <- factor(col1)
++       if (!is.factor(col2)) col2 <- factor(col2)
++       int1 <- as.integer(col1)
++       int2 <- as.integer(col2)
++       for (k1 in 2:length(levels(col1))) {
++         for (k2 in 2:length(levels(col2))) {
++           X_cols[[length(X_cols) + 1]] <- as.numeric(int1 == k1 & int2 == k2)
++           col_names <- c(col_names, paste0(parts[1], levels(col1)[k1], ":",
++                                            parts[2], levels(col2)[k2]))
++         }
++       }
++     }
++     # Factor x numeric
++     else if (is.factor(col1) || is.character(col1)) {
++       if (!is.factor(col1)) col1 <- factor(col1)
++       int1 <- as.integer(col1)
++       num2 <- as.numeric(col2)
++       for (k in 2:length(levels(col1))) {
++         X_cols[[length(X_cols) + 1]] <- as.numeric(int1 == k) * num2
++         col_names <- c(col_names, paste0(parts[1], levels(col1)[k], ":", parts[2]))
++       }
++     }
++     else if (is.factor(col2) || is.character(col2)) {
++       if (!is.factor(col2)) col2 <- factor(col2)
++       int2 <- as.integer(col2)
++       num1 <- as.numeric(col1)
++       for (k in 2:length(levels(col2))) {
++         X_cols[[length(X_cols) + 1]] <- num1 * as.numeric(int2 == k)
++         col_names <- c(col_names, paste0(parts[1], ":", parts[2], levels(col2)[k]))
++       }
++     }
++     # Both numeric
++     else {
++       X_cols[[length(X_cols) + 1]] <- as.numeric(col1) * as.numeric(col2)
++       col_names <- c(col_names, iterm)
++     }
++     rm(col1, col2)
++   }
++ 
++   # Bind into matrix — single allocation
++   X <- do.call(cbind, X_cols)
++   colnames(X) <- col_names
++   rm(X_cols)
++   gc(verbose = FALSE)
++ 
++   log_msg("    Design matrix (raw): ", format(nrow(X), big.mark = ","), " x ", ncol(X),
++           " (", format(object.size(X), units = "MB"), ")")
++ 
++   # --- 4b. Drop zero-variance and collinear columns ---
++   # Track all dropped columns with reasons
++   dropped_cols <- character(0)
++   dropped_reasons <- character(0)
++ 
++   # Zero-variance check
++   col_vars <- apply(X, 2, var, na.rm = TRUE)
++   zero_var <- which(col_vars < .Machine$double.eps)
++   if (length(zero_var) > 0) {
++     log_msg("    Dropping ", length(zero_var), " zero-variance column(s): ",
++             paste(colnames(X)[zero_var], collapse = ", "))
++     dropped_cols <- c(dropped_cols, colnames(X)[zero_var])
++     dropped_reasons <- c(dropped_reasons, rep("zero variance", length(zero_var)))
++     X <- X[, -zero_var, drop = FALSE]
++   }
++ 
++   # Collinearity check via QR decomposition with column pivoting.
++   # QR pivoting selects columns greedily by largest remaining norm — columns
++   # beyond the detected rank are linear combinations of those already selected.
++   # Uses a random sample of rows (not the full 89M) to keep memory low.
++   sample_n <- min(nrow(X), 50000L)
++   sample_idx <- sort(sample.int(nrow(X), sample_n))
++   qr_check <- qr(X[sample_idx, ])
++   qr_rank <- qr_check$rank
++   if (qr_rank < ncol(X)) {
++     keep_pivot <- qr_check$pivot[seq_len(qr_rank)]
++     drop_pivot <- qr_check$pivot[(qr_rank + 1):ncol(X)]
++     dropped_qr <- colnames(X)[drop_pivot]
++     log_msg("    WARNING: rank deficiency detected (rank ", qr_rank, " < ", ncol(X), " cols)")
++     log_msg("    Dropping collinear column(s): ", paste(dropped_qr, collapse = ", "))
++     dropped_cols <- c(dropped_cols, dropped_qr)
++     dropped_reasons <- c(dropped_reasons, rep("collinear (QR pivot)", length(dropped_qr)))
++     X <- X[, keep_pivot, drop = FALSE]
++   }
++   rm(qr_check, sample_idx)
++ 
++   log_msg("    Design matrix (final): ", format(nrow(X), big.mark = ","), " x ", ncol(X),
++           " (", format(object.size(X), units = "MB"), ")")
++   log_memory("After building design matrix")
++ 
++   # --- 5. Scale continuous columns for numerical stability ---
++   # coxph (used by clogit) internally rescales columns. Without this,
++   # columns like lnDist (~9, sd ~2) vs dummies (0/1) cause the Hessian
++   # condition number to explode (rcond ~1e-18), producing singular warnings
++   # and erratic step-halving. We scale to unit sd, fit, then unscale.
++   #
++   # IMPORTANT: only scale genuinely continuous columns (sd > 1).
++   # Binary dummies have sd 0.1–0.5 — scaling those AMPLIFIES them and
++   # makes conditioning worse. We detect binary columns by checking if
++   # all values are 0 or 1.
++   col_sds <- apply(X, 2, sd)
++   # Fast binary check: sample 10K rows instead of scanning all 89M
++   sample_rows <- X[sample.int(nrow(X), min(10000L, nrow(X))), , drop = FALSE]
++   is_binary <- apply(sample_rows, 2, function(col) all(col %in% c(0, 1)))
++   rm(sample_rows)
++   needs_scaling <- !is_binary & col_sds > 1.0
++   scale_factors <- rep(1.0, ncol(X))
++   scale_factors[needs_scaling] <- col_sds[needs_scaling]
++ 
++   if (any(needs_scaling)) {
++     log_msg("    Scaling ", sum(needs_scaling), " continuous column(s): ",
++             paste(colnames(X)[needs_scaling], "(sd=",
++                   round(col_sds[needs_scaling], 2), ")", collapse = ", "))
++     X <- sweep(X, 2, scale_factors, "/")
++   } else {
++     log_msg("    No columns need scaling")
++   }
++ 
++   # --- 6. Free source data — X and vectors are all we need now ---
++   rm(data)
++   gc(verbose = FALSE)
++   log_memory("After freeing source data")
++   t_fit <- system.time({
++     fit <- tryCatch({
++       fastclogit(
++         X       = X,
++         choice  = choice_vec,
++         strata  = strata_vec,
++         offset  = offset_vec,
++         cluster = cluster_vec,
++         max_iter = 100L,
++         tol     = 1e-6,
++         verbose = CONFIG$verbose
++       )
++     }, error = function(e) {
++       log_msg("    ERROR in fastclogit: ", e$message)
++       return(NULL)
++     })
++   })
++   log_memory("After fastclogit")
++   log_msg("    Fit time: ", round(t_fit[3], 2), " seconds")
++ 
++   if (is.null(fit)) return(NULL)
++ 
++   # --- 7. Unscale coefficients and SEs back to original units ---
++   # If we fitted on X_scaled = X / s, then beta_scaled = beta_orig * s
++   # So beta_orig = beta_scaled / s, and SE_orig = SE_scaled / s
++   fit$coefficients <- fit$coefficients / scale_factors
++   fit$se           <- fit$se / scale_factors
++   fit$vcov         <- sweep(sweep(fit$vcov, 1, scale_factors, "/"), 2, scale_factors, "/")
++   if (!is.null(fit$vcov_robust)) {
++     fit$se_robust  <- fit$se_robust / scale_factors
++     fit$vcov_robust <- sweep(sweep(fit$vcov_robust, 1, scale_factors, "/"), 2, scale_factors, "/")
++   }
++   # Hessian and gradient are in scaled space — generally not used downstream,
++   # but mark them so nobody accidentally misinterprets them
++   fit$scaled <- any(needs_scaling)
++   fit$scale_factors <- scale_factors
++ 
++   # Re-apply coefficient names after unscaling.
++   # Division can strip names in some R/Rcpp edge cases, and tidy_fastclogit
++   # relies on names(object$coefficients) to build the output data.frame.
++   coef_names <- fit$terms  # set by fastclogit() — always present
++   if (is.null(coef_names)) coef_names <- colnames(X)  # fallback
++   if (!is.null(coef_names) && length(coef_names) == length(fit$coefficients)) {
++     names(fit$coefficients) <- coef_names
++     names(fit$se)           <- coef_names
++     rownames(fit$vcov) <- colnames(fit$vcov) <- coef_names
++     if (!is.null(fit$vcov_robust)) {
++       names(fit$se_robust)  <- coef_names
++       rownames(fit$vcov_robust) <- colnames(fit$vcov_robust) <- coef_names
++     }
++   }
++ 
++   # --- 8. Attach metadata, then FREE large objects ---
++   fit$n <- nrow(X)
++   fit$nevent <- sum(choice_vec)
++ 
++   # Carry dropped columns through to results
++   if (length(dropped_cols) > 0) {
++     fit$dropped_terms <- data.frame(
++       term   = dropped_cols,
++       reason = dropped_reasons,
++       stringsAsFactors = FALSE
++     )
++     log_msg("    Dropped terms attached to fit$dropped_terms")
++   } else {
++     fit$dropped_terms <- NULL
++   }
++ 
++   rm(X, choice_vec, strata_vec, cluster_vec, offset_vec, complete_idx)
++   gc(verbose = FALSE)
++   log_memory("After cleanup")
++ 
++   fit
++ }
+> 
+> 
+> ###############################################################################
+> ####              RESULT EXTRACTION: tidy_fastclogit_result()              ####
+> ####     Produces the SAME output columns as tidy_clogit()                 ####
+> ###############################################################################
+> 
+> tidy_fastclogit_result <- function(fit, model_name = "model",
++                                     exponentiate = TRUE) {
++   #
++   # Converts a fastclogit fit to data.table with columns:
++   #   model, term, estimate, std.error, conf.low, conf.high,
++   #   statistic, p.value, n_obs, n_events, loglik, concordance
++   #
++   # This matches the output of tidy_clogit() in run_clogit_models.R.
++   #
++ 
++   # Use robust SEs if available (from cluster), else model-based
++   td <- tidy_fastclogit(fit, robust = TRUE, exponentiate = FALSE)
++ 
++   coef_table <- data.table(
++     term        = td$term,
++     estimate    = td$estimate,       # log-odds
++     exp_estimate = exp(td$estimate),  # OR
++     std.error   = td$std.error,
++     statistic   = td$statistic,
++     p.value     = td$p.value,
++     conf.low    = td$conf.low,
++     conf.high   = td$conf.high
++   )
++ 
++   if (exponentiate) {
++     coef_table[, `:=`(
++       conf.low  = exp(conf.low),
++       conf.high = exp(conf.high),
++       estimate  = exp_estimate
++     )]
++   }
++ 
++   # Add model metadata (same columns as tidy_clogit)
++   coef_table[, `:=`(
++     model       = model_name,
++     n_obs       = fit$n,
++     n_events    = fit$nevent,
++     loglik      = fit$loglik,
++     concordance = NA_real_,  # fastclogit doesn't compute concordance (yet)
++     dropped     = FALSE
++   )]
++ 
++   # Append dropped columns as NA rows for transparency
++   if (!is.null(fit$dropped_terms) && nrow(fit$dropped_terms) > 0) {
++     dropped_rows <- data.table(
++       term        = fit$dropped_terms$term,
++       estimate    = NA_real_,
++       exp_estimate = NA_real_,
++       std.error   = NA_real_,
++       statistic   = NA_real_,
++       p.value     = NA_real_,
++       conf.low    = NA_real_,
++       conf.high   = NA_real_,
++       model       = model_name,
++       n_obs       = fit$n,
++       n_events    = fit$nevent,
++       loglik      = fit$loglik,
++       concordance = NA_real_,
++       dropped     = TRUE,
++       drop_reason = fit$dropped_terms$reason
++     )
++     coef_table[, drop_reason := NA_character_]
++     coef_table <- rbindlist(list(coef_table, dropped_rows), fill = TRUE)
++   }
++ 
++   setcolorder(coef_table, c("model", "term", "estimate", "std.error",
++                              "conf.low", "conf.high", "statistic", "p.value"))
++ 
++   return(coef_table)
++ }
+> 
+> 
+> ###############################################################################
+> ####              FORMAT RESULTS (identical to original)                    ####
+> ###############################################################################
+> 
+> format_results <- function(results, digits = 3) {
++   results_fmt <- copy(results)
++   results_fmt[, estimate := round(estimate, digits)]
++   results_fmt[, std.error := round(std.error, digits)]
++   results_fmt[, conf.low := round(conf.low, digits)]
++   results_fmt[, conf.high := round(conf.high, digits)]
++   results_fmt[, CI := paste0("[", conf.low, ", ", conf.high, "]")]
++   results_fmt[, sig := fcase(
++     p.value < 0.001, "***",
++     p.value < 0.01,  "**",
++     p.value < 0.05,  "*",
++     p.value < 0.1,   ".",
++     default = ""
++   )]
++   return(results_fmt)
++ }
+> 
+> 
+> ###############################################################################
+> ####                         MAIN EXECUTION                                ####
+> ###############################################################################
+> 
+> # Build tags
+> config_tag <- build_config_tag()
+> model_tag <- build_model_config_tag(CONFIG)
+> model_specs <- build_model_specs(CONFIG$edu_var)
+> 
+> log_msg("=== fastclogit Partner Choice Models ===")
+[21:57:04] === fastclogit Partner Choice Models ===
+> log_msg("Tag: ", model_tag)
+[21:57:04] Tag: _strat_cohort_b100_ed3_age17-45
+> log_msg("Models: ", paste(CONFIG$models_to_run, collapse = ", "))
+[21:57:04] Models: 4, 5
+> log_msg("Education: ", CONFIG$edu_var)
+[21:57:04] Education: Edudiff3
+> log_msg("")
+[21:57:04] 
+> 
+> all_results <- list()
+> 
+> for (sex in CONFIG$run_for_sex) {
++   log_msg("========== Sex: ", sex, " ==========")
++ 
++   # --- Determine needed columns BEFORE loading ---
++   all_model_ids <- unique(c(
++     as.character(CONFIG$models_to_run),
++     if (CONFIG$run_stratified_by_ancestry) as.character(CONFIG$stratified_models)
++   ))
++   all_formula_vars <- unique(unlist(lapply(model_specs[all_model_ids], all.vars)))
++   keep_cols <- unique(c(
++     all_formula_vars,
++     "CoupleId", "LopNrEgo", "actualpartner",
++     "correction",           # offset
++     "MacroSweEgo",          # stratified models
++     "Samelan", "AgeEgo", "Ar",  # needed for filters
++     "BothWorkplaceGeo"
++   ))
++ 
++   # --- Load ONLY needed columns from fst ---
++   data_file <- paste0("couples_cov_", sex, config_tag, CONFIG$testdata)
++   fst_path <- get_fst_path(data_file)
++   log_msg("Loading: ", data_file)
++ 
++   if (file.exists(fst_path)) {
++     # Read only the columns we need — avoids loading 117 cols (saves ~40 GB)
++     available_cols <- names(fst::fst(fst_path))
++     load_cols <- intersect(keep_cols, available_cols)
++     log_msg("  Selective load: ", length(load_cols), " of ", length(available_cols), " columns")
++     dt <- fst::read_fst(fst_path, columns = load_cols, as.data.table = TRUE)
++   } else {
++     # Fallback to full load via loaders.R
++     dt <- tryCatch({
++       load_data(data_file)
++     }, error = function(e) {
++       log_msg("ERROR loading data: ", e$message)
++       NULL
++     })
++     if (is.null(dt)) next
++     setDT(dt)
++     # Drop unneeded columns
++     drop_cols <- setdiff(names(dt), intersect(keep_cols, names(dt)))
++     if (length(drop_cols) > 0) dt[, (drop_cols) := NULL]
++   }
++ 
++   log_msg("  Loaded: ", format(nrow(dt), big.mark = ","), " rows, ",
++           ncol(dt), " columns")
++   log_memory("After load")
++ 
++   # --- Filter ---
++   n0 <- nrow(dt)
++ 
++   # Year filter
++   if ("Ar" %in% names(dt)) {
++     dt <- dt[Ar >= CONFIG$earliestyr & Ar <= CONFIG$latestyr]
++     log_msg("  Year filter [", CONFIG$earliestyr, "-", CONFIG$latestyr, "]: ",
++             format(n0 - nrow(dt), big.mark = ","), " rows removed")
++   }
++ 
++   # Age filter
++   if (!is.null(CONFIG$age_range) && "AgeEgo" %in% names(dt)) {
++     dt[, actual_age := AgeEgo[actualpartner == 1][1], by = CoupleId]
++     n_before <- nrow(dt)
++     dt <- dt[actual_age >= CONFIG$age_range[1] & actual_age <= CONFIG$age_range[2]]
++     dt[, actual_age := NULL]
++     log_msg("  Age filter [", CONFIG$age_range[1], "-", CONFIG$age_range[2], "]: ",
++             format(n_before - nrow(dt), big.mark = ","), " rows removed")
++   }
++ 
++   # Same county filter
++   if (CONFIG$samelan && !stratified_sampling && "Samelan" %in% names(dt)) {
++     n_before <- nrow(dt)
++     dt <- dt[Samelan == 1]
++     log_msg("  Same-county filter: ",
++             format(n_before - nrow(dt), big.mark = ","), " rows removed")
++   }
++ 
++   # Population restriction
++   if (CONFIG$population == "BothWorkplaceGeo" && "BothWorkplaceGeo" %in% names(dt)) {
++     keep_couples <- dt[actualpartner == 1 & BothWorkplaceGeo == 1, unique(CoupleId)]
++     n_before <- nrow(dt)
++     dt <- dt[CoupleId %in% keep_couples]
++     dt <- dt[!(actualpartner == 0 & BothWorkplaceGeo == 0)]
++     log_msg("  Workplace-geo filter: ",
++             format(n_before - nrow(dt), big.mark = ","), " rows removed")
++   }
++ 
++   # Drop filter-only columns no longer needed
++   filter_only <- c("Ar", "AgeEgo", "Samelan", "BothWorkplaceGeo")
++   filter_only <- intersect(filter_only, names(dt))
++   if (length(filter_only) > 0) dt[, (filter_only) := NULL]
++ 
++   gc(verbose = FALSE)
++   log_msg("  Final: ", format(nrow(dt), big.mark = ","), " rows, ",
++           ncol(dt), " cols, ", dt[, uniqueN(CoupleId)], " choice sets")
++   log_memory("After filters + column cleanup")
++ 
++   # --- Prepare factors ---
++   prepare_factors(dt)
++ 
++   # --- Run models ---
++   if (CONFIG$run_models) {
++     for (model_id in as.character(CONFIG$models_to_run)) {
++       log_msg("  --- Model ", model_id, " (", sex, ") ---")
++ 
++       if (!model_id %in% names(model_specs)) {
++         log_msg("    Model ", model_id, " not found in specs — skipping")
++         next
++       }
++ 
++       formula <- model_specs[[model_id]]
++       log_msg("    Formula: ", deparse(formula))
++ 
++       use_offset <- stratified_sampling && "correction" %in% names(dt)
++       if (use_offset) log_msg("    Using McFadden/Manski offset(correction)")
++ 
++       model <- run_clogit_fast(
++         data        = dt,
++         formula     = formula,
++         group_var   = "CoupleId",
++         cluster_var = "LopNrEgo",
++         use_offset  = use_offset
++       )
++ 
++       # Free dt if this is the last model AND nothing else needs it
++       # (stratified models and KHB both need dt to stay alive)
++       if (model_id == tail(as.character(CONFIG$models_to_run), 1) &&
++           !CONFIG$run_stratified_by_ancestry &&
++           !CONFIG$run_khb) {
++         log_msg("    Freeing data.table (no more models need it)")
++         rm(dt)
++         gc(verbose = FALSE)
++         log_memory("After freeing dt")
++       }
++ 
++       if (!is.null(model)) {
++         results <- tidy_fastclogit_result(
++           model,
++           model_name = paste0("model_", model_id),
++           exponentiate = CONFIG$report_odds_ratios
++         )
++         results[, sex := sex]
++         results[, model_id := model_id]
++         results[, stratified := FALSE]
++         results[, population := CONFIG$population]
++ 
++         all_results[[paste0(model_id, "_", sex)]] <- results
++ 
++         # Print summary
++         log_msg("    Converged: ", model$converged, " (", model$iterations, " iters)")
++         log_msg("    Log-lik: ", round(model$loglik, 4))
++         log_msg("    N obs: ", format(model$n, big.mark = ","))
++ 
++         if (CONFIG$save_model_objects) {
++           model_file <- paste0("model_", model_id, "_", sex, model_tag, "_fast.rds")
++           saveRDS(model, file.path(OUTPUT_PATH, model_file))
++           log_msg("    Saved: ", model_file)
++         }
++ 
++         rm(model)
++       }
++ 
++       gc(verbose = FALSE)
++     }
++   }
++ 
++   # --- Stratified by ancestry ---
++   if (CONFIG$run_models && CONFIG$run_stratified_by_ancestry &&
++       "MacroSweEgo" %in% names(dt)) {
++ 
++     macro_levels <- if (is.null(CONFIG$ancestry_groups)) {
++       dt[actualpartner == 1, unique(na.omit(MacroSweEgo))]
++     } else {
++       CONFIG$ancestry_groups
++     }
++ 
++     for (model_id in as.character(CONFIG$stratified_models)) {
++       formula <- model_specs[[model_id]]
++       use_offset <- stratified_sampling && "correction" %in% names(dt)
++ 
++       for (val in macro_levels) {
++         log_msg("  --- Model ", model_id, " stratified: MacroSweEgo = ", val, " ---")
++         dt_sub <- dt[MacroSweEgo == val]
++ 
++         if (nrow(dt_sub) < 200) {
++           log_msg("    Too few observations (", nrow(dt_sub), ") — skipping")
++           next
++         }
++ 
++         model <- run_clogit_fast(dt_sub, formula, use_offset = use_offset)
++ 
++         if (!is.null(model)) {
++           results <- tidy_fastclogit_result(
++             model,
++             model_name = paste0("model_", model_id, "_MacroSweEgo_", val),
++             exponentiate = CONFIG$report_odds_ratios
++           )
++           results[, sex := sex]
++           results[, model_id := model_id]
++           results[, stratified := TRUE]
++           results[, strat_var := "MacroSweEgo"]
++           results[, strat_value := as.character(val)]
++           results[, population := CONFIG$population]
++ 
++           all_results[[paste0(model_id, "_strat_", val, "_", sex)]] <- results
++           rm(model)
++         }
++         rm(dt_sub)
++         gc(verbose = FALSE)
++       }
++     }
++   }
++ 
++   # --- KHB mediation analysis (uses fastclogit, no survival:: needed) ---
++   if (CONFIG$run_khb) {
++     log_msg("  --- KHB mediation analysis (via fastclogit) ---")
++     log_msg("  Variable of interest: ", CONFIG$khb_variable)
++ 
++     if (!CONFIG$khb_variable %in% names(dt)) {
++       log_msg("  -> SKIPPED: Variable '", CONFIG$khb_variable, "' not found in data")
++     } else {
++ 
++       # Slim dt to only columns needed across all KHB comparisons
++       all_khb_cols <- c("actualpartner", "CoupleId", "LopNrEgo")
++       for (khb_pair in CONFIG$khb_comparisons) {
++         r_id <- khb_pair[1]; f_id <- khb_pair[2]
++         if (r_id %in% names(model_specs) && f_id %in% names(model_specs)) {
++           all_khb_cols <- c(all_khb_cols,
++                             all.vars(model_specs[[r_id]]),
++                             all.vars(model_specs[[f_id]]))
++         }
++       }
++       if (stratified_sampling) all_khb_cols <- c(all_khb_cols, "correction")
++       all_khb_cols <- unique(all_khb_cols)
++       all_khb_cols <- intersect(all_khb_cols, names(dt))
++ 
++       n_cols_before <- ncol(dt)
++       dt <- dt[, ..all_khb_cols]
++       gc(verbose = FALSE)
++       log_msg("  Slimmed dt from ", n_cols_before, " to ", ncol(dt), " columns for KHB")
++       log_memory("After dt slim for KHB")
++ 
++       khb_results_list <- list()
++ 
++       for (khb_pair in CONFIG$khb_comparisons) {
++         reduced_id <- khb_pair[1]
++         full_id <- khb_pair[2]
++         comparison_label <- paste0(reduced_id, "_to_", full_id)
++ 
++         log_msg("  KHB Comparison: Model ", reduced_id, " -> Model ", full_id)
++ 
++         # Incremental save: skip if already done in a previous (crashed) run
++         khb_comp_file <- paste0("khb_", sex, "_", comparison_label, model_tag, "_fast.csv")
++         khb_comp_path <- file.path(OUTPUT_PATH, khb_comp_file)
++         if (file.exists(khb_comp_path)) {
++           log_msg("    -> ALREADY DONE: found ", khb_comp_file)
++           cached <- fread(khb_comp_path)
++           khb_results_list[[paste0(reduced_id, "_", full_id, "_", sex)]] <- cached
++           rm(cached)
++           next
++         }
++ 
++         if (!reduced_id %in% names(model_specs) || !full_id %in% names(model_specs)) {
++           log_msg("    -> SKIPPED: Model not defined")
++           next
++         }
++ 
++         reduced_formula <- model_specs[[reduced_id]]
++         full_formula <- model_specs[[full_id]]
++         reduced_terms <- .extract_terms(reduced_formula)
++         full_terms <- .extract_terms(full_formula)
++ 
++         key_vars_khb <- if (CONFIG$khb_variable == "EduPairing_interact") {
++           c("EduAlter_3_fac",
++             "EduAlter_3_fac:EduEgoPostShort",
++             "EduAlter_3_fac:EduEgoPostLong")
++         } else {
++           CONFIG$khb_variable
++         }
++         concomitant_khb <- setdiff(reduced_terms, key_vars_khb)
++         z_vars_khb <- setdiff(full_terms, reduced_terms)
++ 
++         log_msg("    Key variable (X):   ", paste(key_vars_khb, collapse = ", "))
++         log_msg("    Mediators (Z):      ", paste(z_vars_khb, collapse = ", "))
++         log_msg("    Concomitants (C):   ", paste(concomitant_khb, collapse = ", "))
++ 
++         if (length(z_vars_khb) == 0) {
++           log_msg("    -> SKIPPED: No new variables in full model")
++           next
++         }
++ 
++         # Pre-filter columns for this comparison
++         khb_needed_cols <- unique(c(
++           "actualpartner", "CoupleId", "LopNrEgo",
++           all.vars(reduced_formula), all.vars(full_formula)))
++         if (stratified_sampling) khb_needed_cols <- unique(c(khb_needed_cols, "correction"))
++         khb_needed_cols <- intersect(khb_needed_cols, names(dt))
++         dt_khb <- dt[, ..khb_needed_cols]
++ 
++         # Run KHB decomposition (via fastclogit)
++         khb_result <- tryCatch({
++           khb_clogit(
++             data = dt_khb,
++             key_vars = key_vars_khb,
++             z_vars = z_vars_khb,
++             concomitant = concomitant_khb,
++             group_var = "CoupleId",
++             cluster_var = "LopNrEgo",
++             use_offset = stratified_sampling
++           )
++         }, error = function(e) {
++           log_msg("    -> ERROR: ", e$message)
++           return(NULL)
++         })
++         rm(dt_khb)
++         gc(verbose = FALSE)
++         log_memory(paste0("After KHB comparison ", reduced_id, "-", full_id))
++ 
++         if (!is.null(khb_result) && khb_result$success) {
++           decomp <- khb_result$decomposition
++           log_msg("    -> SUCCESS")
++ 
++           for (i in 1:nrow(decomp)) {
++             r <- decomp[i]
++             log_msg("       ", r$coefficient, ":")
++             log_msg("         Total:    ", round(r$total_effect, 4))
++             log_msg("         Direct:   ", round(r$direct_effect, 4))
++             log_msg("         Indirect: ", round(r$indirect_effect, 4))
++             log_msg("         % Mediated: ", round(r$conf_pct, 1), "%")
++           }
++ 
++           decomp_out <- copy(decomp)
++           decomp_out[, `:=`(sex = sex, comparison = comparison_label,
++                              population = CONFIG$population)]
++           khb_results_list[[paste0(reduced_id, "_", full_id, "_", sex)]] <- decomp_out
++ 
++           # Incremental save
++           fwrite(decomp_out, khb_comp_path)
++           log_msg("    Saved: ", khb_comp_file)
++           rm(khb_result, decomp, decomp_out)
++           gc(verbose = FALSE)
++ 
++         } else if (!is.null(khb_result)) {
++           log_msg("    -> FAILED: ", khb_result$error)
++           rm(khb_result)
++           gc(verbose = FALSE)
++         } else {
++           log_msg("    -> FAILED: khb_clogit returned NULL (see error above)")
++         }
++       }
++ 
++       if (length(khb_results_list) > 0) {
++         khb_combined <- rbindlist(khb_results_list, fill = TRUE)
++         all_results[[paste0("khb_", sex)]] <- khb_combined
++ 
++         khb_file <- paste0("khb_results_", sex, model_tag, "_fast.csv")
++         fwrite(khb_combined, file.path(OUTPUT_PATH, khb_file))
++         log_msg("  Saved combined: ", khb_file)
++       }
++     }
++     log_memory("After KHB analysis")
++   }
++ 
++   if (exists("dt")) rm(dt)
++   gc(verbose = FALSE)
++ }
+[21:57:05] ========== Sex: women ==========
+[21:57:05] Loading: couples_cov_women_strat_cohort_b100
+[21:57:06]   Selective load: 20 of 117 columns
+[21:57:20]   Loaded: 89,349,089 rows, 20 columns
+[21:57:20]   [Memory] After load: 8528.3 MB
+[21:57:25]   Year filter [1991-2019]: 4,479,078 rows removed
+[21:57:33]   Age filter [17-45]: 124,835 rows removed
+[21:57:35]   Final: 84,745,176 rows, 17 cols, 841249 choice sets
+[21:57:37]   [Memory] After filters + column cleanup: 7120 MB
+[21:57:57]   --- Model 4 (women) ---
+[21:57:57]     Formula: actualpartner ~ Edudiff3 + AgeDiffcat + SameMicroAnc + MesoNotMicro +     AlterFirstGen + BothFirstGen + n_years_same_uni + n_years_same_cfar +     n_years_same_peorg + lnDist
+[21:57:57]     Using McFadden/Manski offset(correction)
+[21:58:09]     Working with 84,745,176 rows
+[21:58:14]   [Memory] After extracting metadata vectors: 9383 MB
+[21:58:43]     Design matrix (raw): 84,745,176 x 22 (14224.2 Mb)
+[21:59:34]     Design matrix (final): 84,745,176 x 22 (14224.2 Mb)
+[21:59:37]   [Memory] After building design matrix: 23607.2 MB
+[22:00:21]     Scaling 1 continuous column(s): lnDist (sd= 1.67 )
+[22:01:19]   [Memory] After freeing source data: 23607.2 MB
+Iter 1: loglik = -5503570.45068314, max|grad| = 1.52e+06
+Iter 2: loglik = -406313737.72404182, max|grad| = 3.08e+05
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 3: loglik = -231485406.62784547, max|grad| = 6.47e+05
+  Step-halving: 13 halvings, step_size = 1.2207e-04
+Iter 4: loglik = -104691538.41506058, max|grad| = 3.97e+05
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 5: loglik = -58160170.72068061, max|grad| = 5.24e+05
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 6: loglik = -50900385.90229972, max|grad| = 5.03e+05
+  Step-halving: 13 halvings, step_size = 1.2207e-04
+Iter 7: loglik = -19187629.69919680, max|grad| = 5.03e+05
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 8: loglik = -15243625.65438241, max|grad| = 5.02e+05
+  Step-halving: 5 halvings, step_size = 3.1250e-02
+Iter 9: loglik = -4751577.58554255, max|grad| = 1.39e+06
+  Step-halving: 2 halvings, step_size = 2.5000e-01
+Iter 10: loglik = -4125003.66014175, max|grad| = 5.00e+05
+Iter 11: loglik = -3286700.85274844, max|grad| = 6.91e+04
+Iter 12: loglik = -3275499.85413048, max|grad| = 5.57e+04
+Iter 13: loglik = -3214720.69240086, max|grad| = 1.71e+04
+Iter 14: loglik = -3213942.65131433, max|grad| = 1.69e+02
+Iter 15: loglik = -3213941.89477006, max|grad| = 2.16e-01
+Iter 16: loglik = -3213941.89476894, max|grad| = 4.81e-07
+[22:26:24]   [Memory] After fastclogit: 23610.7 MB
+[22:26:24]     Fit time: 1501.46 seconds
+[22:26:26]   [Memory] After cleanup: 7123.6 MB
+[22:26:27]     Converged: TRUE (16 iters)
+[22:26:27]     Log-lik: -3213942
+[22:26:27]     N obs: 84,745,176
+[22:26:27]   --- Model 5 (women) ---
+[22:26:27]     Formula: actualpartner ~ Edudiff3 + AgeDiffcat + SameMicroAnc + MesoNotMicro +     AlterFirstGen + BothFirstGen + n_years_same_uni + n_years_same_cfar +     ln_mean_cfar_size_c + n_years_same_cfar:ln_mean_cfar_size_c +     n_years_same_peorg + ln_mean_peorg_size_c + n_years_same_peorg:ln_mean_peorg_size_c +     lnDist
+[22:26:27]     Using McFadden/Manski offset(correction)
+[22:26:42]     Dropped 84,080,223 rows with NAs
+[22:26:42]     Working with 664,953 rows
+[22:26:44]   [Memory] After extracting metadata vectors: 7462.2 MB
+[22:26:46]     Design matrix (raw): 664,953 x 30 (152.2 Mb)
+[22:26:46]     WARNING: rank deficiency detected (rank 27 < 30 cols)
+[22:26:46]     Dropping collinear column(s): n_years_same_peorg3+, n_years_same_cfar3+:ln_mean_cfar_size_c, n_years_same_peorg3+:ln_mean_peorg_size_c
+[22:26:46]     Design matrix (final): 664,953 x 27 (137 Mb)
+[22:26:46]   [Memory] After building design matrix: 7606.7 MB
+[22:26:47]     Scaling 5 continuous column(s): ln_mean_cfar_size_c (sd= 1.66 ), ln_mean_peorg_size_c (sd= 1.52 ), lnDist (sd= 2.06 ), n_years_same_cfar1:ln_mean_cfar_size_c (sd= 1.38 ), n_years_same_peorg1:ln_mean_peorg_size_c (sd= 1.19 )
+[22:26:48]   [Memory] After freeing source data: 7606.7 MB
+Iter 1: loglik = -8687.34300115, max|grad| = 1.88e+03
+Iter 2: loglik = -6467.38289056, max|grad| = 3.06e+02
+Iter 3: loglik = -6373.34889858, max|grad| = 3.92e+01
+Iter 4: loglik = -6371.27718202, max|grad| = 9.90e-01
+Iter 5: loglik = -6371.27563546, max|grad| = 7.27e-04
+Iter 6: loglik = -6371.27563546, max|grad| = 4.88e-10
+[22:27:46]   [Memory] After fastclogit: 7606.8 MB
+[22:27:46]     Fit time: 58.1 seconds
+[22:27:46]     Dropped terms attached to fit$dropped_terms
+[22:27:46]   [Memory] After cleanup: 7131.3 MB
+[22:27:46]     Converged: TRUE (6 iters)
+[22:27:46]     Log-lik: -6371.276
+[22:27:46]     N obs: 664,953
+[22:27:46]   --- KHB mediation analysis (via fastclogit) ---
+[22:27:46]   Variable of interest: Edudiff3
+[22:27:50]   Slimmed dt from 17 to 14 columns for KHB
+[22:27:50]   [Memory] After dt slim for KHB: 5507.3 MB
+[22:27:50]   KHB Comparison: Model 0 -> Model 4
+[22:27:50]     Key variable (X):   Edudiff3
+[22:27:51]     Mediators (Z):      n_years_same_uni, n_years_same_cfar, n_years_same_peorg, lnDist
+[22:27:51]     Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen
+
+========== KHB DECOMPOSITION (fastclogit) ==========
+
+
+Step 1: Residualizing Z-variables on key variables (within strata)
+  Key variables (X):  Edudiff3
+  Z-variables:        n_years_same_uni, n_years_same_cfar, n_years_same_peorg, lnDist
+  Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen
+  Strata (group):     CoupleId
+
+  Predictor design matrix: 13 columns
+  Factor mediator 'n_years_same_uni' -> 4 dummies
+  Factor mediator 'n_years_same_cfar' -> 4 dummies
+  Factor mediator 'n_years_same_peorg' -> 4 dummies
+  n_years_same_uni_0 -> n_years_same_uni_0_resid (demeaned R² = 0.0878)
+  n_years_same_uni_1 -> n_years_same_uni_1_resid (demeaned R² = 0.0341)
+  n_years_same_uni_2 -> n_years_same_uni_2_resid (demeaned R² = 0.0187)
+  n_years_same_uni_3. -> n_years_same_uni_3._resid (demeaned R² = 0.0464)
+  n_years_same_cfar_0 -> n_years_same_cfar_0_resid (demeaned R² = 0.0083)
+  n_years_same_cfar_1 -> n_years_same_cfar_1_resid (demeaned R² = 0.0061)
+  n_years_same_cfar_2 -> n_years_same_cfar_2_resid (demeaned R² = 0.0015)
+  n_years_same_cfar_3. -> n_years_same_cfar_3._resid (demeaned R² = 0.0016)
+  n_years_same_peorg_0 -> n_years_same_peorg_0_resid (demeaned R² = 0.0122)
+  n_years_same_peorg_1 -> n_years_same_peorg_1_resid (demeaned R² = 0.0058)
+  n_years_same_peorg_2 -> n_years_same_peorg_2_resid (demeaned R² = 0.0030)
+  n_years_same_peorg_3. -> n_years_same_peorg_3._resid (demeaned R² = 0.0057)
+  lnDist -> lnDist_resid (demeaned R² = 0.0010)
+
+  McFadden/Manski offset: YES
+  Reduced model: 84745176 / 84745176 rows complete
+  Full model:    84745176 / 84745176 rows complete
+
+Step 2: Fitting REDUCED model (Total Effect) via fastclogit
+  Building design matrix for Reduced...
+    Reduced design matrix: 84,745,176 x 25
+    QR: dropping 3 collinear column(s): n_years_same_uni_3._resid, n_years_same_cfar_3._resid, n_years_same_peorg_3._resid
+    Reduced: converged = TRUE (15 iters), loglik = -3213941.8948
+
+Step 3: Fitting FULL model (Direct Effect) via fastclogit
+  Building design matrix for Full...
+    Full design matrix: 84,745,176 x 22
+    Full: converged = TRUE (16 iters), loglik = -3213941.8948
+
+Step 4: Computing KHB decomposition
+
+
+========== KHB RESULTS (fastclogit) ==========
+
+Key variables: Edudiff3
+Z-variables (mediators): n_years_same_uni, n_years_same_cfar, n_years_same_peorg, lnDist
+N events (couples): 841249
+
+--- Decomposition of Effects (log-odds) ---
+
+  Edudiff3Both_no_gym_degree:
+    Total effect (Reduced):     0.6082  (SE: 0.0064)
+    Direct effect (Full):       0.6056  (SE: 0.0064)
+    Indirect effect (Diff):     0.0027  (SE: 0.0091*)
+    Confounding ratio:          1.0044
+    Confounding %:                0.44%
+  Edudiff3Both_gym_degree:
+    Total effect (Reduced):     1.0658  (SE: 0.0042)
+    Direct effect (Full):       0.9981  (SE: 0.0042)
+    Indirect effect (Diff):     0.0677  (SE: 0.0059*)
+    Confounding ratio:          1.0678
+    Confounding %:                6.35%
+  Edudiff3Both_post_sec_short:
+    Total effect (Reduced):     0.5566  (SE: 0.0070)
+    Direct effect (Full):       0.3977  (SE: 0.0070)
+    Indirect effect (Diff):     0.1589  (SE: 0.0099*)
+    Confounding ratio:          1.3995
+    Confounding %:               28.55%
+  Edudiff3Both_post_sec_long:
+    Total effect (Reduced):     0.6196  (SE: 0.0057)
+    Direct effect (Full):       0.2905  (SE: 0.0060)
+    Indirect effect (Diff):     0.3292  (SE: 0.0083*)
+    Confounding ratio:          2.1331
+    Confounding %:               53.12%
+  Edudiff3missing:
+    Total effect (Reduced):    -1.3485  (SE: 0.0163)
+    Direct effect (Full):      -1.2847  (SE: 0.0163)
+    Indirect effect (Diff):    -0.0638  (SE: 0.0231*)
+    Confounding ratio:          1.0497
+    Confounding %:                4.73%
+
+    * Indirect SE assumes independence (conservative).
+
+--- Effects of Z-variables (Full model) ---
+
+  n_years_same_uni1: 0.5643*** (SE: 0.0081, p=0.0000)
+  n_years_same_uni2: 0.9743*** (SE: 0.0102, p=0.0000)
+  n_years_same_uni3+: 1.7386*** (SE: 0.0098, p=0.0000)
+  n_years_same_cfar1: 3.1260*** (SE: 0.0091, p=0.0000)
+  n_years_same_cfar2: 3.9841*** (SE: 0.0134, p=0.0000)
+  n_years_same_cfar3+: 4.5633*** (SE: 0.0144, p=0.0000)
+  n_years_same_peorg1: 0.2577*** (SE: 0.0092, p=0.0000)
+  n_years_same_peorg2: 0.1255*** (SE: 0.0152, p=0.0000)
+  n_years_same_peorg3+: -0.0678*** (SE: 0.0168, p=0.0001)
+  lnDist: -0.9347*** (SE: 0.0009, p=0.0000)
+
+[00:20:50]   [Memory] After KHB comparison 0-4: 5759.6 MB
+[00:20:50]     -> SUCCESS
+[00:20:50]        Edudiff3Both_no_gym_degree:
+[00:20:50]          Total:    0.6082
+[00:20:50]          Direct:   0.6056
+[00:20:50]          Indirect: 0.0027
+[00:20:50]          % Mediated: 0.4%
+[00:20:50]        Edudiff3Both_gym_degree:
+[00:20:50]          Total:    1.0658
+[00:20:50]          Direct:   0.9981
+[00:20:50]          Indirect: 0.0677
+[00:20:50]          % Mediated: 6.4%
+[00:20:50]        Edudiff3Both_post_sec_short:
+[00:20:50]          Total:    0.5566
+[00:20:50]          Direct:   0.3977
+[00:20:50]          Indirect: 0.1589
+[00:20:50]          % Mediated: 28.5%
+[00:20:50]        Edudiff3Both_post_sec_long:
+[00:20:50]          Total:    0.6196
+[00:20:50]          Direct:   0.2905
+[00:20:50]          Indirect: 0.3292
+[00:20:50]          % Mediated: 53.1%
+[00:20:50]        Edudiff3missing:
+[00:20:50]          Total:    -1.3485
+[00:20:50]          Direct:   -1.2847
+[00:20:50]          Indirect: -0.0638
+[00:20:50]          % Mediated: 4.7%
+[00:20:51]     Saved: khb_women_0_to_4_strat_cohort_b100_ed3_age17-45_fast.csv
+[00:20:51]   KHB Comparison: Model 1 -> Model 4
+[00:20:51]     Key variable (X):   Edudiff3
+[00:20:51]     Mediators (Z):      n_years_same_cfar, n_years_same_peorg, lnDist
+[00:20:51]     Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen, n_years_same_uni
+
+========== KHB DECOMPOSITION (fastclogit) ==========
+
+
+Step 1: Residualizing Z-variables on key variables (within strata)
+  Key variables (X):  Edudiff3
+  Z-variables:        n_years_same_cfar, n_years_same_peorg, lnDist
+  Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen, n_years_same_uni
+  Strata (group):     CoupleId
+
+  Predictor design matrix: 16 columns
+  Factor mediator 'n_years_same_cfar' -> 4 dummies
+  Factor mediator 'n_years_same_peorg' -> 4 dummies
+  n_years_same_cfar_0 -> n_years_same_cfar_0_resid (demeaned R² = 0.0088)
+  n_years_same_cfar_1 -> n_years_same_cfar_1_resid (demeaned R² = 0.0065)
+  n_years_same_cfar_2 -> n_years_same_cfar_2_resid (demeaned R² = 0.0016)
+  n_years_same_cfar_3. -> n_years_same_cfar_3._resid (demeaned R² = 0.0016)
+  n_years_same_peorg_0 -> n_years_same_peorg_0_resid (demeaned R² = 0.0136)
+  n_years_same_peorg_1 -> n_years_same_peorg_1_resid (demeaned R² = 0.0067)
+  n_years_same_peorg_2 -> n_years_same_peorg_2_resid (demeaned R² = 0.0032)
+  n_years_same_peorg_3. -> n_years_same_peorg_3._resid (demeaned R² = 0.0059)
+  lnDist -> lnDist_resid (demeaned R² = 0.0030)
+
+  McFadden/Manski offset: YES
+  Reduced model: 84745176 / 84745176 rows complete
+  Full model:    84745176 / 84745176 rows complete
+
+Step 2: Fitting REDUCED model (Total Effect) via fastclogit
+  Building design matrix for Reduced...
+    Reduced design matrix: 84,745,176 x 24
+    QR: dropping 2 collinear column(s): n_years_same_cfar_3._resid, n_years_same_peorg_3._resid
+    Reduced: converged = FALSE (100 iters), loglik = -3213941.8948
+
+Step 3: Fitting FULL model (Direct Effect) via fastclogit
+  Building design matrix for Full...
+    Full design matrix: 84,745,176 x 22
+    Full: converged = TRUE (16 iters), loglik = -3213941.8948
+
+Step 4: Computing KHB decomposition
+
+
+========== KHB RESULTS (fastclogit) ==========
+
+Key variables: Edudiff3
+Z-variables (mediators): n_years_same_cfar, n_years_same_peorg, lnDist
+N events (couples): 841249
+
+--- Decomposition of Effects (log-odds) ---
+
+  Edudiff3Both_no_gym_degree:
+    Total effect (Reduced):     0.5756  (SE: 0.0064)
+    Direct effect (Full):       0.6056  (SE: 0.0064)
+    Indirect effect (Diff):    -0.0299  (SE: 0.0091*)
+    Confounding ratio:          0.9505
+    Confounding %:               -5.20%
+  Edudiff3Both_gym_degree:
+    Total effect (Reduced):     1.0430  (SE: 0.0042)
+    Direct effect (Full):       0.9981  (SE: 0.0042)
+    Indirect effect (Diff):     0.0449  (SE: 0.0059*)
+    Confounding ratio:          1.0450
+    Confounding %:                4.30%
+  Edudiff3Both_post_sec_short:
+    Total effect (Reduced):     0.5045  (SE: 0.0070)
+    Direct effect (Full):       0.3977  (SE: 0.0070)
+    Indirect effect (Diff):     0.1068  (SE: 0.0099*)
+    Confounding ratio:          1.2685
+    Confounding %:               21.17%
+  Edudiff3Both_post_sec_long:
+    Total effect (Reduced):     0.4166  (SE: 0.0060)
+    Direct effect (Full):       0.2905  (SE: 0.0060)
+    Indirect effect (Diff):     0.1261  (SE: 0.0085*)
+    Confounding ratio:          1.4342
+    Confounding %:               30.27%
+  Edudiff3missing:
+    Total effect (Reduced):    -1.3582  (SE: 0.0163)
+    Direct effect (Full):      -1.2847  (SE: 0.0163)
+    Indirect effect (Diff):    -0.0735  (SE: 0.0231*)
+    Confounding ratio:          1.0572
+    Confounding %:                5.41%
+
+    * Indirect SE assumes independence (conservative).
+
+--- Effects of Z-variables (Full model) ---
+
+  n_years_same_cfar1: 3.1260*** (SE: 0.0091, p=0.0000)
+  n_years_same_cfar2: 3.9841*** (SE: 0.0134, p=0.0000)
+  n_years_same_cfar3+: 4.5633*** (SE: 0.0144, p=0.0000)
+  n_years_same_peorg1: 0.2577*** (SE: 0.0092, p=0.0000)
+  n_years_same_peorg2: 0.1255*** (SE: 0.0152, p=0.0000)
+  n_years_same_peorg3+: -0.0678*** (SE: 0.0168, p=0.0001)
+  lnDist: -0.9347*** (SE: 0.0009, p=0.0000)
+
+[05:51:42]   [Memory] After KHB comparison 1-4: 5759.6 MB
+[05:51:42]     -> SUCCESS
+[05:51:42]        Edudiff3Both_no_gym_degree:
+[05:51:42]          Total:    0.5756
+[05:51:42]          Direct:   0.6056
+[05:51:42]          Indirect: -0.0299
+[05:51:42]          % Mediated: -5.2%
+[05:51:42]        Edudiff3Both_gym_degree:
+[05:51:42]          Total:    1.043
+[05:51:42]          Direct:   0.9981
+[05:51:42]          Indirect: 0.0449
+[05:51:42]          % Mediated: 4.3%
+[05:51:42]        Edudiff3Both_post_sec_short:
+[05:51:42]          Total:    0.5045
+[05:51:42]          Direct:   0.3977
+[05:51:42]          Indirect: 0.1068
+[05:51:42]          % Mediated: 21.2%
+[05:51:42]        Edudiff3Both_post_sec_long:
+[05:51:42]          Total:    0.4166
+[05:51:42]          Direct:   0.2905
+[05:51:42]          Indirect: 0.1261
+[05:51:42]          % Mediated: 30.3%
+[05:51:42]        Edudiff3missing:
+[05:51:42]          Total:    -1.3582
+[05:51:42]          Direct:   -1.2847
+[05:51:42]          Indirect: -0.0735
+[05:51:42]          % Mediated: 5.4%
+[05:51:42]     Saved: khb_women_1_to_4_strat_cohort_b100_ed3_age17-45_fast.csv
+[05:51:42]   KHB Comparison: Model 2 -> Model 4
+[05:51:42]     Key variable (X):   Edudiff3
+[05:51:42]     Mediators (Z):      n_years_same_peorg, lnDist
+[05:51:42]     Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen, n_years_same_uni, n_years_same_cfar
+
+========== KHB DECOMPOSITION (fastclogit) ==========
+
+
+Step 1: Residualizing Z-variables on key variables (within strata)
+  Key variables (X):  Edudiff3
+  Z-variables:        n_years_same_peorg, lnDist
+  Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen, n_years_same_uni, n_years_same_cfar
+  Strata (group):     CoupleId
+
+  Predictor design matrix: 19 columns
+  Factor mediator 'n_years_same_peorg' -> 4 dummies
+  n_years_same_peorg_0 -> n_years_same_peorg_0_resid (demeaned R² = 0.0161)
+  n_years_same_peorg_1 -> n_years_same_peorg_1_resid (demeaned R² = 0.0070)
+  n_years_same_peorg_2 -> n_years_same_peorg_2_resid (demeaned R² = 0.0042)
+  n_years_same_peorg_3. -> n_years_same_peorg_3._resid (demeaned R² = 0.0097)
+  lnDist -> lnDist_resid (demeaned R² = 0.0167)
+
+  McFadden/Manski offset: YES
+  Reduced model: 84745176 / 84745176 rows complete
+  Full model:    84745176 / 84745176 rows complete
+
+Step 2: Fitting REDUCED model (Total Effect) via fastclogit
+  Building design matrix for Reduced...
+    Reduced design matrix: 84,745,176 x 23
+    QR: dropping 1 collinear column(s): n_years_same_peorg_3._resid
+    Reduced: converged = TRUE (26 iters), loglik = -3213941.8948
+
+Step 3: Fitting FULL model (Direct Effect) via fastclogit
+  Building design matrix for Full...
+    Full design matrix: 84,745,176 x 22
+    Full: converged = TRUE (16 iters), loglik = -3213941.8948
+
+Step 4: Computing KHB decomposition
+
+
+========== KHB RESULTS (fastclogit) ==========
+
+Key variables: Edudiff3
+Z-variables (mediators): n_years_same_peorg, lnDist
+N events (couples): 841249
+
+--- Decomposition of Effects (log-odds) ---
+
+  Edudiff3Both_no_gym_degree:
+    Total effect (Reduced):     0.5773  (SE: 0.0064)
+    Direct effect (Full):       0.6056  (SE: 0.0064)
+    Indirect effect (Diff):    -0.0282  (SE: 0.0091*)
+    Confounding ratio:          0.9534
+    Confounding %:               -4.89%
+  Edudiff3Both_gym_degree:
+    Total effect (Reduced):     1.0042  (SE: 0.0042)
+    Direct effect (Full):       0.9981  (SE: 0.0042)
+    Indirect effect (Diff):     0.0061  (SE: 0.0059*)
+    Confounding ratio:          1.0061
+    Confounding %:                0.61%
+  Edudiff3Both_post_sec_short:
+    Total effect (Reduced):     0.4426  (SE: 0.0070)
+    Direct effect (Full):       0.3977  (SE: 0.0070)
+    Indirect effect (Diff):     0.0449  (SE: 0.0099*)
+    Confounding ratio:          1.1129
+    Confounding %:               10.14%
+  Edudiff3Both_post_sec_long:
+    Total effect (Reduced):     0.2753  (SE: 0.0060)
+    Direct effect (Full):       0.2905  (SE: 0.0060)
+    Indirect effect (Diff):    -0.0152  (SE: 0.0085*)
+    Confounding ratio:          0.9477
+    Confounding %:               -5.52%
+  Edudiff3missing:
+    Total effect (Reduced):    -1.2861  (SE: 0.0163)
+    Direct effect (Full):      -1.2847  (SE: 0.0163)
+    Indirect effect (Diff):    -0.0014  (SE: 0.0231*)
+    Confounding ratio:          1.0011
+    Confounding %:                0.11%
+
+    * Indirect SE assumes independence (conservative).
+
+--- Effects of Z-variables (Full model) ---
+
+  n_years_same_peorg1: 0.2577*** (SE: 0.0092, p=0.0000)
+  n_years_same_peorg2: 0.1255*** (SE: 0.0152, p=0.0000)
+  n_years_same_peorg3+: -0.0678*** (SE: 0.0168, p=0.0001)
+  lnDist: -0.9347*** (SE: 0.0009, p=0.0000)
+
+[07:38:47]   [Memory] After KHB comparison 2-4: 5759.7 MB
+[07:38:47]     -> SUCCESS
+[07:38:47]        Edudiff3Both_no_gym_degree:
+[07:38:47]          Total:    0.5773
+[07:38:47]          Direct:   0.6056
+[07:38:47]          Indirect: -0.0282
+[07:38:47]          % Mediated: -4.9%
+[07:38:47]        Edudiff3Both_gym_degree:
+[07:38:47]          Total:    1.0042
+[07:38:47]          Direct:   0.9981
+[07:38:47]          Indirect: 0.0061
+[07:38:47]          % Mediated: 0.6%
+[07:38:47]        Edudiff3Both_post_sec_short:
+[07:38:47]          Total:    0.4426
+[07:38:47]          Direct:   0.3977
+[07:38:47]          Indirect: 0.0449
+[07:38:47]          % Mediated: 10.1%
+[07:38:47]        Edudiff3Both_post_sec_long:
+[07:38:47]          Total:    0.2753
+[07:38:47]          Direct:   0.2905
+[07:38:47]          Indirect: -0.0152
+[07:38:47]          % Mediated: -5.5%
+[07:38:47]        Edudiff3missing:
+[07:38:47]          Total:    -1.2861
+[07:38:47]          Direct:   -1.2847
+[07:38:47]          Indirect: -0.0014
+[07:38:47]          % Mediated: 0.1%
+[07:38:47]     Saved: khb_women_2_to_4_strat_cohort_b100_ed3_age17-45_fast.csv
+[07:38:47]   KHB Comparison: Model 3 -> Model 4
+[07:38:47]     Key variable (X):   Edudiff3
+[07:38:47]     Mediators (Z):      lnDist
+[07:38:47]     Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen, n_years_same_uni, n_years_same_cfar, n_years_same_peorg
+
+========== KHB DECOMPOSITION (fastclogit) ==========
+
+
+Step 1: Residualizing Z-variables on key variables (within strata)
+  Key variables (X):  Edudiff3
+  Z-variables:        lnDist
+  Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen, n_years_same_uni, n_years_same_cfar, n_years_same_peorg
+  Strata (group):     CoupleId
+
+  Predictor design matrix: 22 columns
+  lnDist -> lnDist_resid (demeaned R² = 0.0177)
+
+  McFadden/Manski offset: YES
+  Reduced model: 84745176 / 84745176 rows complete
+  Full model:    84745176 / 84745176 rows complete
+
+Step 2: Fitting REDUCED model (Total Effect) via fastclogit
+  Building design matrix for Reduced...
+    Reduced design matrix: 84,745,176 x 22
+    Reduced: converged = TRUE (22 iters), loglik = -3213941.8948
+
+Step 3: Fitting FULL model (Direct Effect) via fastclogit
+  Building design matrix for Full...
+    Full design matrix: 84,745,176 x 22
+    Full: converged = TRUE (16 iters), loglik = -3213941.8948
+
+Step 4: Computing KHB decomposition
+
+
+========== KHB RESULTS (fastclogit) ==========
+
+Key variables: Edudiff3
+Z-variables (mediators): lnDist
+N events (couples): 841249
+
+--- Decomposition of Effects (log-odds) ---
+
+  Edudiff3Both_no_gym_degree:
+    Total effect (Reduced):     0.5813  (SE: 0.0064)
+    Direct effect (Full):       0.6056  (SE: 0.0064)
+    Indirect effect (Diff):    -0.0243  (SE: 0.0091*)
+    Confounding ratio:          0.9599
+    Confounding %:               -4.18%
+  Edudiff3Both_gym_degree:
+    Total effect (Reduced):     1.0041  (SE: 0.0042)
+    Direct effect (Full):       0.9981  (SE: 0.0042)
+    Indirect effect (Diff):     0.0060  (SE: 0.0059*)
+    Confounding ratio:          1.0060
+    Confounding %:                0.60%
+  Edudiff3Both_post_sec_short:
+    Total effect (Reduced):     0.4372  (SE: 0.0070)
+    Direct effect (Full):       0.3977  (SE: 0.0070)
+    Indirect effect (Diff):     0.0396  (SE: 0.0099*)
+    Confounding ratio:          1.0995
+    Confounding %:                9.05%
+  Edudiff3Both_post_sec_long:
+    Total effect (Reduced):     0.2600  (SE: 0.0060)
+    Direct effect (Full):       0.2905  (SE: 0.0060)
+    Indirect effect (Diff):    -0.0305  (SE: 0.0085*)
+    Confounding ratio:          0.8952
+    Confounding %:              -11.71%
+  Edudiff3missing:
+    Total effect (Reduced):    -1.2762  (SE: 0.0163)
+    Direct effect (Full):      -1.2847  (SE: 0.0163)
+    Indirect effect (Diff):     0.0085  (SE: 0.0231*)
+    Confounding ratio:          0.9934
+    Confounding %:               -0.66%
+
+    * Indirect SE assumes independence (conservative).
+
+--- Effects of Z-variables (Full model) ---
+
+  lnDist: -0.9347*** (SE: 0.0009, p=0.0000)
+
+[08:52:22]   [Memory] After KHB comparison 3-4: 5759.7 MB
+[08:52:22]     -> SUCCESS
+[08:52:22]        Edudiff3Both_no_gym_degree:
+[08:52:22]          Total:    0.5813
+[08:52:22]          Direct:   0.6056
+[08:52:22]          Indirect: -0.0243
+[08:52:22]          % Mediated: -4.2%
+[08:52:22]        Edudiff3Both_gym_degree:
+[08:52:22]          Total:    1.0041
+[08:52:22]          Direct:   0.9981
+[08:52:22]          Indirect: 0.006
+[08:52:22]          % Mediated: 0.6%
+[08:52:22]        Edudiff3Both_post_sec_short:
+[08:52:22]          Total:    0.4372
+[08:52:22]          Direct:   0.3977
+[08:52:22]          Indirect: 0.0396
+[08:52:22]          % Mediated: 9%
+[08:52:22]        Edudiff3Both_post_sec_long:
+[08:52:22]          Total:    0.26
+[08:52:22]          Direct:   0.2905
+[08:52:22]          Indirect: -0.0305
+[08:52:22]          % Mediated: -11.7%
+[08:52:22]        Edudiff3missing:
+[08:52:22]          Total:    -1.2762
+[08:52:22]          Direct:   -1.2847
+[08:52:22]          Indirect: 0.0085
+[08:52:22]          % Mediated: -0.7%
+[08:52:22]     Saved: khb_women_3_to_4_strat_cohort_b100_ed3_age17-45_fast.csv
+[08:52:24]   Saved combined: khb_results_women_strat_cohort_b100_ed3_age17-45_fast.csv
+[08:52:24]   [Memory] After KHB analysis: 5759.7 MB
+[08:52:26] ========== Sex: men ==========
+[08:52:26] Loading: couples_cov_men_strat_cohort_b100
+[08:52:27]   Selective load: 20 of 117 columns
+[08:52:42]   Loaded: 79,793,097 rows, 20 columns
+[08:52:42]   [Memory] After load: 7873.6 MB
+[08:52:46]   Year filter [1991-2019]: 4,363,258 rows removed
+[08:52:54]   Age filter [17-45]: 67,795 rows removed
+[08:52:57]   Final: 75,362,044 rows, 17 cols, 748607 choice sets
+[08:52:58]   [Memory] After filters + column cleanup: 6588.6 MB
+[08:53:16]   --- Model 4 (men) ---
+[08:53:16]     Formula: actualpartner ~ Edudiff3 + AgeDiffcat + SameMicroAnc + MesoNotMicro +     AlterFirstGen + BothFirstGen + n_years_same_uni + n_years_same_cfar +     n_years_same_peorg + lnDist
+[08:53:16]     Using McFadden/Manski offset(correction)
+[08:53:27]     Working with 75,362,044 rows
+[08:53:31]   [Memory] After extracting metadata vectors: 8601 MB
+[08:53:57]     Design matrix (raw): 75,362,044 x 22 (12649.3 Mb)
+[08:54:41]     Design matrix (final): 75,362,044 x 22 (12649.3 Mb)
+[08:54:43]   [Memory] After building design matrix: 21250.2 MB
+[08:55:23]     Scaling 1 continuous column(s): lnDist (sd= 1.66 )
+[08:56:16]   [Memory] After freeing source data: 21250.2 MB
+Iter 1: loglik = -4916440.05763847, max|grad| = 1.36e+06
+Iter 2: loglik = -339521353.02874911, max|grad| = 2.68e+05
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 3: loglik = -209070936.24432781, max|grad| = 2.28e+05
+  Step-halving: 14 halvings, step_size = 6.1035e-05
+Iter 4: loglik = -104660918.82829456, max|grad| = 2.28e+05
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 5: loglik = -78642079.09725125, max|grad| = 2.28e+05
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+Iter 6: loglik = -65643043.03318774, max|grad| = 2.28e+05
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 7: loglik = -62449513.84238320, max|grad| = 2.30e+05
+  Step-halving: 14 halvings, step_size = 6.1035e-05
+Iter 8: loglik = -31498621.02398874, max|grad| = 2.30e+05
+  Step-halving: 15 halvings, step_size = 3.0518e-05
+Iter 9: loglik = -29589728.99015090, max|grad| = 2.46e+05
+  Step-halving: 6 halvings, step_size = 1.5625e-02
+Iter 10: loglik = -8534915.14897634, max|grad| = 9.05e+05
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+Iter 11: loglik = -6557399.86487762, max|grad| = 8.17e+05
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 12: loglik = -5911177.30625916, max|grad| = 8.15e+05
+  Step-halving: 9 halvings, step_size = 1.9531e-03
+Iter 13: loglik = -5550373.69980284, max|grad| = 8.01e+05
+  Step-halving: 4 halvings, step_size = 6.2500e-02
+Iter 14: loglik = -5364443.18537814, max|grad| = 6.61e+05
+Iter 15: loglik = -3882547.61696311, max|grad| = 7.47e+05
+  Step-halving: 2 halvings, step_size = 2.5000e-01
+Iter 16: loglik = -3215369.19908968, max|grad| = 4.01e+05
+Iter 17: loglik = -3007999.25447379, max|grad| = 3.01e+05
+  Step-halving: 1 halvings, step_size = 5.0000e-01
+Iter 18: loglik = -2881775.91579745, max|grad| = 1.50e+05
+Iter 19: loglik = -2843491.04848858, max|grad| = 5.35e+03
+Iter 20: loglik = -2843406.37608710, max|grad| = 1.77e+01
+Iter 21: loglik = -2843406.36261177, max|grad| = 5.88e-03
+  Step-halving: 1 halvings, step_size = 5.0000e-01
+Iter 22: loglik = -2843406.36261177, max|grad| = 2.94e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 23: loglik = -2843406.36261176, max|grad| = 2.94e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 24: loglik = -2843406.36261177, max|grad| = 2.94e-03
+  Step-halving: 8 halvings, step_size = 3.9062e-03
+Iter 25: loglik = -2843406.36261177, max|grad| = 2.93e-03
+  Step-halving: 9 halvings, step_size = 1.9531e-03
+Iter 26: loglik = -2843406.36261174, max|grad| = 2.92e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 27: loglik = -2843406.36261174, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 28: loglik = -2843406.36261174, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 29: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 30: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 31: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 32: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 33: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 34: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 35: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 36: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 37: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 38: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 39: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 40: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 41: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 42: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 43: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 44: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+Iter 45: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 15 halvings, step_size = 3.0518e-05
+Iter 46: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 16 halvings, step_size = 1.5259e-05
+Iter 47: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 48: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 49: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 50: loglik = -2843406.36261175, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 51: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 52: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 53: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 54: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 55: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+Iter 56: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 57: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 58: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 59: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 60: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 14 halvings, step_size = 6.1035e-05
+Iter 61: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 62: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 63: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 64: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 65: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 66: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 67: loglik = -2843406.36261176, max|grad| = 2.92e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 68: loglik = -2843406.36261177, max|grad| = 2.92e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 69: loglik = -2843406.36261177, max|grad| = 2.92e-03
+  Step-halving: 6 halvings, step_size = 1.5625e-02
+Iter 70: loglik = -2843406.36261177, max|grad| = 2.88e-03
+  Step-halving: 10 halvings, step_size = 9.7656e-04
+Iter 71: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 12 halvings, step_size = 2.4414e-04
+Iter 72: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 73: loglik = -2843406.36261173, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 74: loglik = -2843406.36261173, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 75: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 76: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 77: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 78: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 79: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 18 halvings, step_size = 3.8147e-06
+Iter 80: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 81: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 82: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 83: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 84: loglik = -2843406.36261174, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 85: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 86: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+Iter 87: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 88: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 89: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+Iter 90: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 91: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 92: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 93: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 94: loglik = -2843406.36261175, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 95: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 96: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 97: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 98: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 19 halvings, step_size = 1.9073e-06
+Iter 99: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 20 halvings, step_size = 9.5367e-07
+Iter 100: loglik = -2843406.36261176, max|grad| = 2.87e-03
+  Step-halving: 17 halvings, step_size = 7.6294e-06
+[12:29:26]   [Memory] After fastclogit: 21250.3 MB
+[12:29:26]     Fit time: 12784.38 seconds
+[12:29:28]   [Memory] After cleanup: 6588.6 MB
+[12:29:28]     Converged: FALSE (100 iters)
+[12:29:28]     Log-lik: -2843406
+[12:29:28]     N obs: 75,362,044
+[12:29:28]   --- Model 5 (men) ---
+[12:29:28]     Formula: actualpartner ~ Edudiff3 + AgeDiffcat + SameMicroAnc + MesoNotMicro +     AlterFirstGen + BothFirstGen + n_years_same_uni + n_years_same_cfar +     ln_mean_cfar_size_c + n_years_same_cfar:ln_mean_cfar_size_c +     n_years_same_peorg + ln_mean_peorg_size_c + n_years_same_peorg:ln_mean_peorg_size_c +     lnDist
+[12:29:28]     Using McFadden/Manski offset(correction)
+[12:29:42]     Dropped 75,029,627 rows with NAs
+[12:29:42]     Working with 332,417 rows
+[12:29:43]   [Memory] After extracting metadata vectors: 6883.7 MB
+[12:29:45]     Design matrix (raw): 332,417 x 30 (76.1 Mb)
+[12:29:45]     WARNING: rank deficiency detected (rank 27 < 30 cols)
+[12:29:45]     Dropping collinear column(s): n_years_same_peorg3+, n_years_same_cfar3+:ln_mean_cfar_size_c, n_years_same_peorg3+:ln_mean_peorg_size_c
+[12:29:45]     Design matrix (final): 332,417 x 27 (68.5 Mb)
+[12:29:46]   [Memory] After building design matrix: 6956 MB
+[12:29:46]     Scaling 5 continuous column(s): ln_mean_cfar_size_c (sd= 1.69 ), ln_mean_peorg_size_c (sd= 1.91 ), lnDist (sd= 2.06 ), n_years_same_cfar1:ln_mean_cfar_size_c (sd= 1.36 ), n_years_same_peorg1:ln_mean_peorg_size_c (sd= 1.51 )
+[12:29:47]   [Memory] After freeing source data: 6956 MB
+Iter 1: loglik = -6345.94884304, max|grad| = 1.54e+03
+Iter 2: loglik = -4642.97021621, max|grad| = 2.65e+02
+Iter 3: loglik = -4534.86593459, max|grad| = 4.29e+01
+Iter 4: loglik = -4529.98383941, max|grad| = 1.99e+00
+Iter 5: loglik = -4529.96031369, max|grad| = 7.37e-03
+Iter 6: loglik = -4529.96030820, max|grad| = 3.53e-06
+  Converged on relative loglik change (1.21e-09) + gradient (3.53e-06)
+[12:31:15]   [Memory] After fastclogit: 6956 MB
+[12:31:15]     Fit time: 88.25 seconds
+[12:31:15]     Dropped terms attached to fit$dropped_terms
+[12:31:16]   [Memory] After cleanup: 6592.4 MB
+[12:31:16]     Converged: TRUE (6 iters)
+[12:31:16]     Log-lik: -4529.96
+[12:31:16]     N obs: 332,417
+[12:31:16]   --- KHB mediation analysis (via fastclogit) ---
+[12:31:16]   Variable of interest: Edudiff3
+[12:31:20]   Slimmed dt from 17 to 14 columns for KHB
+[12:31:20]   [Memory] After dt slim for KHB: 5151.2 MB
+[12:31:21]   KHB Comparison: Model 0 -> Model 4
+[12:31:21]     Key variable (X):   Edudiff3
+[12:31:21]     Mediators (Z):      n_years_same_uni, n_years_same_cfar, n_years_same_peorg, lnDist
+[12:31:21]     Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen
+
+========== KHB DECOMPOSITION (fastclogit) ==========
+
+
+Step 1: Residualizing Z-variables on key variables (within strata)
+  Key variables (X):  Edudiff3
+  Z-variables:        n_years_same_uni, n_years_same_cfar, n_years_same_peorg, lnDist
+  Concomitants (C):   AgeDiffcat, SameMicroAnc, MesoNotMicro, AlterFirstGen, BothFirstGen
+  Strata (group):     CoupleId
+
+  Predictor design matrix: 13 columns
+  Factor mediator 'n_years_same_uni' -> 4 dummies
+  Factor mediator 'n_years_same_cfar' -> 4 dummies
+  Factor mediator 'n_years_same_peorg' -> 4 dummies
+  n_years_same_uni_0 -> n_years_same_uni_0_resid (demeaned R² = 0.0931)
+  n_years_same_uni_1 -> n_years_same_uni_1_resid (demeaned R² = 0.0302)
+  n_years_same_uni_2 -> n_years_same_uni_2_resid (demeaned R² = 0.0184)
+  n_years_same_uni_3. -> n_years_same_uni_3._resid (demeaned R² = 0.0570)
+  n_years_same_cfar_0 -> n_years_same_cfar_0_resid (demeaned R² = 0.0098)
+  n_years_same_cfar_1 -> n_years_same_cfar_1_resid (demeaned R² = 0.0060)
+  n_years_same_cfar_2 -> n_years_same_cfar_2_resid (demeaned R² = 0.0018)
+  n_years_same_cfar_3. -> n_years_same_cfar_3._resid (demeaned R² = 0.0027)
+  n_years_same_peorg_0 -> n_years_same_peorg_0_resid (demeaned R² = 0.0162)
+  n_years_same_peorg_1 -> n_years_same_peorg_1_resid (demeaned R² = 0.0093)
+  n_years_same_peorg_2 -> n_years_same_peorg_2_resid (demeaned R² = 0.0032)
+  n_years_same_peorg_3. -> n_years_same_peorg_3._resid (demeaned R² = 0.0046)
+  lnDist -> lnDist_resid (demeaned R² = 0.0012)
+
+  McFadden/Manski offset: YES
+  Reduced model: 75362044 / 75362044 rows complete
+  Full model:    75362044 / 75362044 rows complete
+
+Step 2: Fitting REDUCED model (Total Effect) via fastclogit
+  Building design matrix for Reduced...
+    Reduced design matrix: 75,362,044 x 25
+    QR: dropping 3 collinear column(s): n_years_same_uni_3._resid, n_years_same_cfar_3._resid, n_years_same_peorg_3._resid
+    Reduced: converged = TRUE (28 iters), loglik = -2843406.3626
+
+Step 3: Fitting FULL model (Direct Effect) via fastclogit
+  Building design matrix for Full...
+    Full design matrix: 75,362,044 x 22

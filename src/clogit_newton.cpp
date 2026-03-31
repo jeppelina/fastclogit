@@ -38,6 +38,9 @@ Rcpp::List clogit_fit_cpp(
     arma::vec exp_eta_ws(max_K);
     arma::vec prob_ws(max_K);
 
+    int stall_count = 0;          // consecutive iters with no loglik improvement
+    int max_stall = 5;            // declare converged after this many stalled iters
+
     for (iter = 0; iter < max_iter; iter++) {
         double loglik_new = 0.0;
         grad.zeros();
@@ -98,7 +101,7 @@ Rcpp::List clogit_fit_cpp(
         // --- Convergence checks (BEFORE computing Newton step) ---
         double grad_max = arma::abs(grad).max();
 
-        // Primary: gradient norm
+        // Primary: absolute gradient norm
         if (grad_max < tol) {
             loglik = loglik_new;
             converged = true;
@@ -106,11 +109,14 @@ Rcpp::List clogit_fit_cpp(
             break;
         }
 
-        // Secondary: relative log-likelihood change (catches flat regions)
+        // Secondary: relative log-likelihood change + relaxed gradient
+        // With 75M+ rows, max|grad| of ~0.003 can be the numerical floor.
+        // Accept convergence when loglik has stabilised and gradient is small.
         if (iter > 0) {
-            double rel_ll_change = std::abs(loglik_new - loglik) /
-                                   (std::abs(loglik) + 1e-10);
-            if (rel_ll_change < tol * 0.01 && grad_max < tol * 100) {
+            double abs_ll_change = std::abs(loglik_new - loglik);
+            double rel_ll_change = abs_ll_change / (std::abs(loglik) + 1e-10);
+
+            if (rel_ll_change < tol * 0.01 && grad_max < tol * 1e4) {
                 // Log-lik essentially unchanged AND gradient is reasonably small
                 loglik = loglik_new;
                 converged = true;
@@ -120,6 +126,25 @@ Rcpp::List clogit_fit_cpp(
                             rel_ll_change, grad_max);
                 }
                 break;
+            }
+
+            // Tertiary: stall detection — loglik hasn't budged for several iters
+            // This catches cases where gradient is stuck above the secondary
+            // threshold but the optimizer can't make any progress at all.
+            if (abs_ll_change < 1e-10) {
+                stall_count++;
+                if (stall_count >= max_stall) {
+                    loglik = loglik_new;
+                    converged = true;
+                    iter++;
+                    if (verbose) {
+                        Rprintf("  Converged: loglik unchanged for %d consecutive iterations (max|grad| = %.2e)\n",
+                                max_stall, grad_max);
+                    }
+                    break;
+                }
+            } else {
+                stall_count = 0;
             }
         }
 

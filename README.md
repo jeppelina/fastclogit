@@ -6,18 +6,28 @@ Memory-efficient conditional logit estimation for large-scale discrete choice da
 
 ```r
 # Install from GitHub (requires Rcpp toolchain)
-remotes::install_github("jlindmarker/fastclogit")
+remotes::install_github("jeppelina/fastclogit")
 
 # Or install from local source
 devtools::install("/path/to/fastclogit")
 ```
+
+### MONA / restricted environments
+
+If you cannot install R packages (e.g., on SCB's MONA servers), use the source-able files in `mona/`. Copy the folder to MONA and run:
+
+```r
+source("load_fastclogit.R")
+```
+
+See `mona/README_MONA.md` for full instructions.
 
 ## Quick start
 
 ```r
 library(fastclogit)
 
-# Simulate partner-choice data (500 egos × 30 alternatives)
+# Simulate partner-choice data (500 egos x 30 alternatives)
 sim <- simulate_clogit_data(n_egos = 500, n_alts = 30)
 
 # Fit using the formula interface
@@ -83,9 +93,9 @@ result$decomposition
 
 ## Why not `survival::clogit()`?
 
-`clogit()` internally calls `model.matrix()` and `model.frame()`, which create full copies of the data in R's memory. For a dataset with 89 million rows and 30 predictors, this means ~80–120 GB of peak RAM — more than most servers have.
+`clogit()` internally calls `model.matrix()` and `model.frame()`, which create full copies of the data in R's memory. For a dataset with 89 million rows and 30 predictors, this means ~80-120 GB of peak RAM — more than most servers have.
 
-`fastclogit` avoids this by building the design matrix column-by-column directly from the data.frame/data.table, and passing it to a C++ Newton-Raphson optimizer that works in-place. Peak memory for the same dataset: ~7–10 GB above the input data.
+`fastclogit` avoids this by building the design matrix column-by-column directly from the data.frame/data.table, and passing it to a C++ Newton-Raphson optimizer that works in-place. Peak memory for the same dataset: ~7-10 GB above the input data.
 
 Typical performance on a 89M-row dataset (30 predictors, clustered SEs):
 
@@ -99,11 +109,23 @@ Typical performance on a 89M-row dataset (30 predictors, clustered SEs):
 
 - **Formula interface** with automatic factor expansion, interaction support, NA handling
 - **Newton-Raphson** with LogSumExp numerical stability, adaptive ridge regularization, and step-halving line search
+- **Three-tier convergence**: absolute gradient, relative log-likelihood change, and stall detection for robust convergence on very large datasets
 - **Clustered sandwich SEs** matching `survival::coxph()` small-sample correction
 - **McFadden/Manski offsets** for stratified sampling correction
 - **Collinearity detection** via QR decomposition with column pivoting
-- **KHB decomposition** for mediation analysis in conditional logit
+- **KHB decomposition** for mediation analysis in conditional logit (memory-safe: residuals stored separately, no full-data copies)
+- **MONA-ready**: source-able R files for restricted computing environments where packages can't be installed
 - **Data simulator** for testing and validation
+
+## Convergence
+
+The optimizer uses three convergence criteria, checked in order:
+
+1. **Gradient norm**: `max|grad| < tol` (default tol = 1e-6)
+2. **Relative log-likelihood + gradient**: log-likelihood stable to `tol * 0.01` and `max|grad| < tol * 1e4`
+3. **Stall detection**: log-likelihood unchanged (< 1e-10) for 5 consecutive iterations
+
+This ensures robust convergence even when the gradient cannot reach machine precision — common with very large datasets (75M+ rows) where floating-point accumulation limits gradient accuracy.
 
 ## Validation
 
@@ -111,9 +133,9 @@ The package is validated against `survival::clogit()` across multiple configurat
 
 ## References
 
-- Kohler, U., Karlson, K. B. & Holm, A. (2011). Comparing coefficients of nested nonlinear probability models. *The Stata Journal*, 11(3), 420–438.
+- Kohler, U., Karlson, K. B. & Holm, A. (2011). Comparing coefficients of nested nonlinear probability models. *The Stata Journal*, 11(3), 420-438.
 - McFadden, D. (1978). Modelling the choice of residential location. In *Spatial Interaction Theory and Planning Models*.
-- Manski, C. F. & Lerman, S. R. (1977). The estimation of choice probabilities from choice-based samples. *Econometrica*, 45(8), 1977–1988.
+- Manski, C. F. & Lerman, S. R. (1977). The estimation of choice probabilities from choice-based samples. *Econometrica*, 45(8), 1977-1988.
 
 ## License
 
