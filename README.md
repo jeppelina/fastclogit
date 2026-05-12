@@ -109,13 +109,34 @@ Typical performance on a 89M-row dataset (30 predictors, clustered SEs):
 
 - **Formula interface** with automatic factor expansion, interaction support, NA handling
 - **Newton-Raphson** with LogSumExp numerical stability, adaptive ridge regularization, and step-halving line search
-- **Three-tier convergence**: absolute gradient, relative log-likelihood change, and stall detection for robust convergence on very large datasets
+- **Three-tier convergence**: absolute gradient, relative log-likelihood + unhalved-step-norm, and stall detection — robust on rare-cell × decade interactions where step-halving stalls
 - **Clustered sandwich SEs** matching `survival::coxph()` small-sample correction
 - **McFadden/Manski offsets** for stratified sampling correction
 - **Collinearity detection** via QR decomposition with column pivoting
+- **Sparse-X path** (NEW v0.4): pass a `Matrix::dgCMatrix` instead of a dense matrix and the C++ kernel automatically dispatches to a CSR-walking Newton solver. For factor-heavy designs (~5% density) this cuts peak memory by ~8× and the design matrix from O(n·p·8B) to O(nnz·12B). Bit-identical to the dense path (max coefficient drift across validation suite: 4.66e-15, machine epsilon).
 - **KHB decomposition** for mediation analysis in conditional logit (memory-safe: residuals stored separately, no full-data copies)
 - **MONA-ready**: source-able R files for restricted computing environments where packages can't be installed
 - **Data simulator** for testing and validation
+
+### Sparse-X quick reference
+
+```r
+library(fastclogit); library(Matrix)
+
+# Build sparse design matrix directly (avoids materialising the dense form)
+X_sparse <- Matrix::sparse.model.matrix(
+  ~ pair_gen * decade + age_diff * decade + edu * decade + ln_dist * decade,
+  data = dt)[, -1, drop = FALSE]  # drop the intercept
+
+# fastclogit auto-detects sparseMatrix input and dispatches to the sparse kernel
+fit <- fastclogit(
+  X = X_sparse, choice = dt$actualpartner,
+  strata = dt$CoupleId, cluster = dt$LopNrEgo)
+```
+
+The sparse path is automatic — there is no `sparse = TRUE` flag. Detection
+is via `is(X, "sparseMatrix")`. Coefficient names, vcov, vcov_robust, and the
+S3 methods (`coef`, `confint`, `summary`, etc.) are unchanged.
 
 ## Convergence
 
@@ -130,6 +151,19 @@ This ensures robust convergence even when the gradient cannot reach machine prec
 ## Validation
 
 The package is validated against `survival::clogit()` across multiple configurations (basic, with offset, with clustering, factor predictors, interactions). Coefficients and standard errors match to machine precision. See `tests/testthat/test-basic.R`.
+
+### Sparse path validation
+
+The sparse kernel (`clogit_fit_sparse_cpp`) is validated against the dense kernel and `survival::clogit` on four scenarios in `tests/sparse_validation/`:
+
+| Problem | n × p | Density | Max ‖Δcoef‖ vs dense | Max ‖Δcoef‖ vs survival |
+|---|---|---|---|---|
+| small dense | 2.5k × 5 | 100% | 5.55e-17 | 2.90e-14 |
+| medium factor | 40k × 23 | ~10% | 6.11e-16 | 3.49e-08 |
+| Paper-3-like | 1M × 92 | ~7% | **4.44e-16** | (clogit infeasible) |
+| edge: rare cells × cluster | 20k × 15 | ~8% | 4.66e-15 | 5.37e-10 |
+
+All sparse-vs-dense comparisons are at machine epsilon. Validation suite runs in ~3s on a laptop: `Rscript tests/sparse_validation/run_real_sparse.R`.
 
 ## References
 

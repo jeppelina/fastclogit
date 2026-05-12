@@ -50,9 +50,26 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   cl <- match.call()
 
   # --- Input validation ---
-  if (is.data.frame(X)) X <- as.matrix(X)
-  if (!is.matrix(X) || !is.numeric(X)) {
-    stop("X must be a numeric matrix or data.frame coercible to numeric matrix")
+  # Sparse path: dgCMatrix / sparseMatrix from Matrix package.
+  # Dense path: numeric matrix / coercible data.frame.
+  is_sparse <- inherits(X, "sparseMatrix")
+  if (is_sparse) {
+    if (!requireNamespace("Matrix", quietly = TRUE))
+      stop("Sparse X path requires the Matrix package. install.packages('Matrix').")
+    # Coerce any sparse format to CSC (dgCMatrix) — Armadillo's sp_mat is CSC.
+    if (!inherits(X, "dgCMatrix")) X <- methods::as(X, "CsparseMatrix")
+    # nnz guard — sp_mat indices are 32-bit signed in Armadillo
+    nnz <- length(X@x)
+    if (nnz > .Machine$integer.max)
+      stop("Sparse X has ", format(nnz, big.mark = ","),
+           " non-zeros, exceeding 32-bit index range (",
+           .Machine$integer.max, "). Subsample alters further.")
+  } else {
+    if (is.data.frame(X)) X <- as.matrix(X)
+    if (!is.matrix(X) || !is.numeric(X)) {
+      stop("X must be a numeric matrix, data.frame coercible to numeric, ",
+           "or a sparseMatrix (Matrix package)")
+    }
   }
 
   n <- nrow(X)
@@ -73,7 +90,12 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
 
   # --- Sort by strata (required for group boundary computation) ---
   ord <- order(strata)
-  X       <- X[ord, , drop = FALSE]
+  if (is_sparse) {
+    # dgCMatrix row-indexing is supported via [i, , drop = FALSE]
+    X <- X[ord, , drop = FALSE]
+  } else {
+    X <- X[ord, , drop = FALSE]
+  }
   choice  <- choice[ord]
   strata_sorted <- strata[ord]
   offset  <- offset[ord]
@@ -100,7 +122,17 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   }
 
   # --- Check for zero-variance columns ---
-  col_vars <- apply(X, 2, var)
+  if (is_sparse) {
+    # For sparse X, compute per-column variance without densifying:
+    # var(col_j) = (sum(x_j^2) - n*mean(x_j)^2) / (n - 1).
+    # If a column has no non-zeros at all, variance is 0.
+    csums  <- Matrix::colSums(X)
+    csums2 <- Matrix::colSums(X * X)  # element-wise square via methods
+    means  <- csums / n
+    col_vars <- (csums2 - n * means^2) / (n - 1)
+  } else {
+    col_vars <- apply(X, 2, var)
+  }
   zero_var <- which(col_vars < .Machine$double.eps)
   if (length(zero_var) > 0) {
     warning("Dropping ", length(zero_var), " zero-variance column(s): ",
@@ -109,9 +141,17 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
     p <- ncol(X)
   }
 
-  # --- Fit via C++ ---
-  fit <- clogit_fit_cpp(X, choice, offset, group_start, group_size,
-                         as.integer(max_iter), tol, verbose)
+  # --- Fit via C++ (dispatch on storage type) ---
+  if (is_sparse) {
+    if (verbose) message("Using sparse C++ kernel (nnz = ",
+                          format(length(X@x), big.mark = ","), ", density = ",
+                          sprintf("%.2f%%", 100 * length(X@x) / (n * p)), ")")
+    fit <- clogit_fit_sparse_cpp(X, choice, offset, group_start, group_size,
+                                   as.integer(max_iter), tol, verbose)
+  } else {
+    fit <- clogit_fit_cpp(X, choice, offset, group_start, group_size,
+                           as.integer(max_iter), tol, verbose)
+  }
 
   # --- Attach column names ---
   cnames <- colnames(X)
@@ -130,10 +170,17 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
     # Each group's cluster = cluster of its first row (ego row)
     group_cluster <- cluster_fac[group_start + 1L]
 
-    sandwich <- clogit_sandwich_cpp(
-      X, choice, offset, group_start, group_size,
-      group_cluster, fit$coefficients, fit$vcov
-    )
+    if (is_sparse) {
+      sandwich <- clogit_sandwich_sparse_cpp(
+        X, choice, offset, group_start, group_size,
+        group_cluster, fit$coefficients, fit$vcov
+      )
+    } else {
+      sandwich <- clogit_sandwich_cpp(
+        X, choice, offset, group_start, group_size,
+        group_cluster, fit$coefficients, fit$vcov
+      )
+    }
 
     fit$vcov_robust <- sandwich$vcov_robust
     rownames(fit$vcov_robust) <- colnames(fit$vcov_robust) <- cnames

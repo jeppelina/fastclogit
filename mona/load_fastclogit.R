@@ -52,19 +52,37 @@ if (!requireNamespace("RcppArmadillo", quietly = TRUE)) {
 cat(as.character(packageVersion("RcppArmadillo")), "\n")
 
 # --- Compile C++ files ---
-cpp_newton   <- file.path(FASTCLOGIT_DIR, "clogit_newton.cpp")
-cpp_sandwich <- file.path(FASTCLOGIT_DIR, "clogit_sandwich.cpp")
+cpp_newton          <- file.path(FASTCLOGIT_DIR, "clogit_newton.cpp")
+cpp_newton_sparse   <- file.path(FASTCLOGIT_DIR, "clogit_newton_sparse.cpp")
+cpp_sandwich        <- file.path(FASTCLOGIT_DIR, "clogit_sandwich.cpp")
+cpp_sandwich_sparse <- file.path(FASTCLOGIT_DIR, "clogit_sandwich_sparse.cpp")
 
 if (!file.exists(cpp_newton))   stop("Cannot find: ", cpp_newton)
 if (!file.exists(cpp_sandwich)) stop("Cannot find: ", cpp_sandwich)
 
-cat("  Compiling clogit_newton.cpp... ")
+cat("  Compiling clogit_newton.cpp (dense)... ")
 Rcpp::sourceCpp(cpp_newton)
 cat("OK\n")
 
-cat("  Compiling clogit_sandwich.cpp... ")
+if (file.exists(cpp_newton_sparse)) {
+  cat("  Compiling clogit_newton_sparse.cpp... ")
+  Rcpp::sourceCpp(cpp_newton_sparse)
+  cat("OK\n")
+} else {
+  cat("  (skipping sparse Newton kernel — file not present)\n")
+}
+
+cat("  Compiling clogit_sandwich.cpp (dense)... ")
 Rcpp::sourceCpp(cpp_sandwich)
 cat("OK\n")
+
+if (file.exists(cpp_sandwich_sparse)) {
+  cat("  Compiling clogit_sandwich_sparse.cpp... ")
+  Rcpp::sourceCpp(cpp_sandwich_sparse)
+  cat("OK\n")
+} else {
+  cat("  (skipping sparse sandwich — file not present)\n")
+}
 
 # --- Source R files ---
 .source_if_exists <- function(filename, label = NULL) {

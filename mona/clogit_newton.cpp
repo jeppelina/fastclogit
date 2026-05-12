@@ -3,20 +3,11 @@
 // Memory-efficient: works on pre-built design matrix, no copies.
 // Each group's contribution to gradient/Hessian is accumulated in-place.
 //
-// Key features:
-//   - LogSumExp trick for numerical stability in softmax
-//   - Adaptive ridge regularization (Levenberg-Marquardt) for near-singular
-//     Hessians: ridge = 1e-8 * max|diag(-H)|, with 1e-4 fallback
-//   - Step-halving line search (up to 20 halvings) to ensure monotone LL
-//   - Dual convergence: gradient norm (primary) + relative LL change (secondary)
-//   - Recomputes Hessian at final beta for accurate variance estimation
-//
-// Called by: fastclogit() in fastclogit.R (via Rcpp::sourceCpp or package)
-//
 // Author: Jesper Lindmarker
 // License: MIT
 
 #include <RcppArmadillo.h>
+#include <limits>
 // [[Rcpp::depends(RcppArmadillo)]]
 
 // [[Rcpp::export]]
@@ -50,6 +41,15 @@ Rcpp::List clogit_fit_cpp(
 
     int stall_count = 0;          // consecutive iters with no loglik improvement
     int max_stall = 5;            // declare converged after this many stalled iters
+
+    // Track the previous (unhalved) Newton step magnitude. The secondary
+    // convergence criterion below requires this to be small as well — that
+    // distinguishes "truly at the MLE" (Newton step → 0) from "stuck because
+    // step-halving killed our step" (gradient small but unhalved step huge).
+    // See Paper-3 Step 4 n=100 bug: without this check, fits with rare cells
+    // and ill-conditioned Hessian directions converged at iter 7 with
+    // interaction params still essentially at zero.
+    double prev_newton_step_norm = std::numeric_limits<double>::infinity();
 
     for (iter = 0; iter < max_iter; iter++) {
         double loglik_new = 0.0;
@@ -126,14 +126,18 @@ Rcpp::List clogit_fit_cpp(
             double abs_ll_change = std::abs(loglik_new - loglik);
             double rel_ll_change = abs_ll_change / (std::abs(loglik) + 1e-10);
 
-            if (rel_ll_change < tol * 0.01 && grad_max < tol * 1e4) {
-                // Log-lik essentially unchanged AND gradient is reasonably small
+            // Secondary (PATCHED 2026-05-12): require small unhalved Newton
+            // step too. Without this, step-halving stalls in ill-conditioned
+            // directions are misdiagnosed as convergence.
+            if (rel_ll_change         < tol * 0.01 &&
+                grad_max              < tol * 1e4 &&
+                prev_newton_step_norm < tol * 1e3) {
                 loglik = loglik_new;
                 converged = true;
                 iter++;
                 if (verbose) {
-                    Rprintf("  Converged on relative loglik change (%.2e) + gradient (%.2e)\n",
-                            rel_ll_change, grad_max);
+                    Rprintf("  Converged on rel-ll (%.2e) + grad (%.2e) + step (%.2e)\n",
+                            rel_ll_change, grad_max, prev_newton_step_norm);
                 }
                 break;
             }
@@ -183,6 +187,10 @@ Rcpp::List clogit_fit_cpp(
             Rcpp::warning("Hessian is singular at iteration %d", iter + 1);
             break;
         }
+
+        // Record UNHALVED Newton step magnitude (used by next iter's
+        // secondary convergence check, see patch note above)
+        prev_newton_step_norm = arma::abs(delta).max();
 
         // Step-halving: ensure log-likelihood does not decrease
         double step_size = 1.0;

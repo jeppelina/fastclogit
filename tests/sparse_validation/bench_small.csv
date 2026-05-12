@@ -1,0 +1,3 @@
+storage,n_strata,K,p,density,time_sec,max_grad,iters,converged,loglik,peak_gb
+sparse,10000,30,92,0.056505,0.305,1.26e-07,7,TRUE,-33043.730488,1.76170349121094
+dense,10000,30,92,1,7.337,1.26e-07,7,TRUE,-33043.730488,2.36320495605469
