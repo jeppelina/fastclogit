@@ -120,14 +120,15 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   # --- Check for zero-variance columns ---
   if (is_sparse) {
     # var(col_j) = (sum(x_j^2) - n*mean(x_j)^2) / (n - 1).
-    # Direct @x walk: avoids the 3.8-GB intermediate that `X * X` materialises
-    # for large dgCMatrix at MONA scale.
-    csums <- Matrix::colSums(X)
-    col_widths <- diff(X@p)
+    # Walk dgCMatrix slots directly: avoids the 3.8-GB intermediate that
+    # `X * X` materialises at MONA scale. p is small (~100); the inner sum
+    # over a column's nz values is vectorised in R.
+    csums  <- Matrix::colSums(X)
     csums2 <- numeric(p)
-    if (length(X@x)) {
-      col_for_x <- rep.int(seq_len(p), col_widths)
-      csums2[] <- tapply(X@x * X@x, col_for_x, sum, default = 0)[seq_len(p)]
+    Xp <- X@p; Xx <- X@x
+    for (j in seq_len(p)) {
+      s <- Xp[j] + 1L; e <- Xp[j + 1L]
+      if (e >= s) csums2[j] <- sum(Xx[s:e] * Xx[s:e])
     }
     col_vars <- (csums2 - (csums^2) / n) / (n - 1)
   } else {
