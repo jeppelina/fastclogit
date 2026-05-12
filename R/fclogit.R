@@ -9,6 +9,12 @@
 #' \code{\link{fastclogit}()} function is still available for cases where you
 #' want to supply a pre-built design matrix.
 #'
+#' Note: \code{fclogit()} builds X as a dense numeric matrix. For factor-heavy
+#' designs at very large scale (>10M rows with many factor levels), build X as
+#' a sparse matrix via \code{Matrix::sparse.model.matrix()} and call
+#' \code{\link{fastclogit}()} directly — see Examples and the
+#' \dQuote{Sparse-X path} section of \code{?fastclogit}.
+#'
 #' @param formula A formula of the form \code{choice ~ x1 + x2 + factor_var}.
 #'   Supports factor/character predictors (automatically dummy-coded, dropping
 #'   the first level as reference), numeric predictors, and two-way interactions
@@ -65,6 +71,16 @@
 #'                 levels = c("Low", "Mid", "High"))
 #' fit3 <- fclogit(choice ~ lnDist + edu, data = d, strata = "strata_id")
 #' summary(fit3)
+#'
+#' # For very large factor-heavy designs, bypass fclogit and build X sparse:
+#' \dontrun{
+#' library(Matrix)
+#' X_sparse <- sparse.model.matrix(
+#'   ~ pair_gen_meso * decade + age * decade + edu * decade,
+#'   data = dt)[, -1, drop = FALSE]   # drop intercept
+#' fit <- fastclogit(X_sparse, choice = dt$y,
+#'                   strata = dt$CoupleId, cluster = dt$LopNrEgo)
+#' }
 #'
 #' @export
 fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,

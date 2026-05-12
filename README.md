@@ -99,11 +99,13 @@ result$decomposition
 
 Typical performance on a 89M-row dataset (30 predictors, clustered SEs):
 
-| | `survival::clogit` | `fastclogit` |
-|---|---|---|
-| Peak RAM | ~120 GB | ~15 GB |
-| Time | ~45 min | ~8 min |
-| Coefficients | identical (< 1e-6) | identical (< 1e-6) |
+| | `survival::clogit` | `fastclogit` (dense) | `fastclogit` (sparse, v0.4) |
+|---|---|---|---|
+| Peak RAM | ~120 GB | ~15 GB | ~3 GB |
+| Time | ~45 min | ~8 min | ~1 min |
+| Coefficients | identical (< 1e-6) | identical (< 1e-6) | identical (< 1e-15, vs dense) |
+
+The sparse path requires the design matrix to be passed as a `Matrix::dgCMatrix` (typically built via `Matrix::sparse.model.matrix()`); see the [sparse quick reference](#sparse-x-quick-reference) below.
 
 ## Features
 

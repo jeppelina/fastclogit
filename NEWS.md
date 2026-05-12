@@ -25,13 +25,40 @@
   kernels now share the patched criterion. Fixes Paper 3 Step 4 n=100
   silently converging at iter 7 with interaction params essentially at zero.
 
+## Performance
+
+Benchmark on simulated Paper-3-like data (30 alters/stratum, 92 cols,
+density ~5.6%):
+
+| n_strata | dense (time, peak)  | sparse (time, peak) | speedup |
+|---------:|--------------------:|--------------------:|--------:|
+|   10,000 | 7.3 s, 1.62 GB      | 0.3 s, 1.16 GB      |     24× |
+|   50,000 | 27.5 s, 4.14 GB     | 1.4 s, 3.52 GB      |     20× |
+
+Dense scales super-linearly with `n` (per-stratum submatrix overhead);
+sparse scales sub-linearly. At MONA Paper-3 production scale (37M rows
+× 128 cols at ~5% density), the projected fit time is ~80 s on sparse
+vs ~95 min on dense, and peak RAM ~30 GB vs ~225 GB.
+
 ## Internal changes
 
-* New C++ files: `src/clogit_newton_sparse.cpp`, `src/clogit_sandwich_sparse.cpp`.
-* `R/fastclogit.R` dispatches on `inherits(X, "sparseMatrix")` and calls the
-  sparse kernel; the public API is unchanged.
-* New validation harness: `tests/sparse_validation/` — generators, reference
-  fits, comparison utilities. Run with
+* New C++ files: `src/clogit_newton_sparse.cpp`,
+  `src/clogit_sandwich_sparse.cpp`, `src/csr_matrix.h`.
+* `R/fastclogit.R` dispatches on `inherits(X, "sparseMatrix")` and calls
+  the sparse kernel via function-pointer dispatch; the public API is
+  unchanged.
+* Sparse zero-variance check walks `X@p`/`X@x` directly instead of
+  materialising `X * X` (saved 3.8 GB intermediate at MONA scale).
+* Step-halving caches `X * delta` once per Newton step so each halving
+  is an O(n) vector update instead of a full O(nnz) matvec.
+* Per-iteration workspaces (H1, H2, xbar, nz_xbar) moved out of the
+  inner loop — single allocation per fit, reused across iterations and
+  strata.
+* New validation harness in `tests/sparse_validation/`: simulation
+  generators (small dense, medium factor, paper-3-like 1M×92, edge
+  rare-cells), cached reference fits against `fastclogit` dense +
+  `survival::clogit`, comparison utilities, and a per-subprocess
+  `/usr/bin/time` benchmark driver. Run with
   `Rscript tests/sparse_validation/run_real_sparse.R`.
 
 # fastclogit 0.3.0

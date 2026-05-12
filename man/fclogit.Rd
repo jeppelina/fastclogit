@@ -73,6 +73,12 @@ without \code{model.matrix()} memory duplication), and returns a fitted
 This is the recommended entry point for most users. The lower-level
 \code{\link{fastclogit}()} function is still available for cases where you
 want to supply a pre-built design matrix.
+
+Note: \code{fclogit()} builds X as a dense numeric matrix. For factor-heavy
+designs at very large scale (>10M rows with many factor levels), build X as
+a sparse matrix via \code{Matrix::sparse.model.matrix()} and call
+\code{\link{fastclogit}()} directly — see Examples and the
+\dQuote{Sparse-X path} section of \code{?fastclogit}.
 }
 \examples{
 # Simulate some data
@@ -95,5 +101,15 @@ d$edu <- factor(sample(c("Low", "Mid", "High"), nrow(d), replace = TRUE),
                 levels = c("Low", "Mid", "High"))
 fit3 <- fclogit(choice ~ lnDist + edu, data = d, strata = "strata_id")
 summary(fit3)
+
+# For very large factor-heavy designs, bypass fclogit and build X sparse:
+\dontrun{
+library(Matrix)
+X_sparse <- sparse.model.matrix(
+  ~ pair_gen_meso * decade + age * decade + edu * decade,
+  data = dt)[, -1, drop = FALSE]   # drop intercept
+fit <- fastclogit(X_sparse, choice = dt$y,
+                  strata = dt$CoupleId, cluster = dt$LopNrEgo)
+}
 
 }
