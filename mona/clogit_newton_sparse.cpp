@@ -32,8 +32,62 @@
 #include <vector>
 #include <limits>
 #include <cmath>
-#include "csr_matrix.h"
 // [[Rcpp::depends(RcppArmadillo)]]
+
+// ---- CSR helper (inlined here so MONA's sourceCpp() install does not
+// need a separate csr_matrix.h on the include path. Avoids "No such
+// file or directory" failures on UNC paths containing '$' (which make
+// may interpret as a make-variable reference) and on any path the build
+// pipeline rewrites. The package build (R CMD INSTALL) uses
+// src/csr_matrix.h instead — keep the two in sync if you ever edit
+// either one. ----
+struct CsrMatrix {
+    int n_rows;
+    int n_cols;
+    std::vector<int>    row_ptr;
+    std::vector<int>    col_idx;
+    std::vector<double> values;
+
+    explicit CsrMatrix(const arma::sp_mat& X) {
+        if (X.n_rows > static_cast<arma::uword>(std::numeric_limits<int>::max()) ||
+            X.n_cols > static_cast<arma::uword>(std::numeric_limits<int>::max())) {
+            Rcpp::stop("CsrMatrix: sp_mat too large for int indexing (rows/cols > 2^31-1)");
+        }
+        n_rows = static_cast<int>(X.n_rows);
+        n_cols = static_cast<int>(X.n_cols);
+
+        // Pass 1: count nnz per row by column-walking (cache-friendly CSC)
+        std::vector<int> row_nnz(n_rows, 0);
+        for (int j = 0; j < n_cols; ++j) {
+            for (arma::sp_mat::const_col_iterator it = X.begin_col(j);
+                 it != X.end_col(j); ++it) {
+                row_nnz[it.row()]++;
+            }
+        }
+        // Prefix sum -> row_ptr
+        row_ptr.resize(static_cast<std::size_t>(n_rows) + 1);
+        row_ptr[0] = 0;
+        for (int i = 0; i < n_rows; ++i) {
+            row_ptr[i + 1] = row_ptr[i] + row_nnz[i];
+        }
+        const int nnz = row_ptr[n_rows];
+        col_idx.resize(nnz);
+        values.resize(nnz);
+
+        // Pass 2: fill col_idx / values via the same column walk
+        std::vector<int> wpos(n_rows, 0);
+        for (int j = 0; j < n_cols; ++j) {
+            for (arma::sp_mat::const_col_iterator it = X.begin_col(j);
+                 it != X.end_col(j); ++it) {
+                const int i   = it.row();
+                const int pos = row_ptr[i] + wpos[i];
+                col_idx[pos]  = j;
+                values[pos]   = (*it);
+                wpos[i]++;
+            }
+        }
+    }
+};
 
 // ===========================================================================
 // Inline helpers — per-iteration accumulators

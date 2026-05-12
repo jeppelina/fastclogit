@@ -1,3 +1,23 @@
+# fastclogit 0.4.1
+
+## Bug fixes
+
+* **MONA source-mode install broken on UNC paths containing `$`.** The
+  v0.4.0 sparse Newton kernel `#include`d a separate header
+  (`csr_matrix.h`); `Rcpp::sourceCpp()` does not add the source's
+  directory to the include search path, so we set `PKG_CPPFLAGS=-I<dir>`
+  in `load_fastclogit.R`. R's `make` pipeline then parsed any `$` inside
+  the path as a make-variable reference and expanded it to empty,
+  rewriting paths like `\\server\projekt\PROJID$\subdir\` into
+  `\\server\projekt\PROJIDsubdir\` — the compiler then "couldn't find"
+  the header in a non-existent directory.
+* **Fix:** inline the CsrMatrix struct directly into the MONA copy of
+  `clogit_newton_sparse.cpp`. The MONA bundle is now fully self-contained
+  — no `csr_matrix.h` file required, no `PKG_CPPFLAGS` manipulation
+  needed. Delete any old `csr_matrix.h` from your MONA directory.
+* The package build (R CMD INSTALL) still uses `src/csr_matrix.h` —
+  unchanged from v0.4.0.
+
 # fastclogit 0.4.0
 
 ## New features

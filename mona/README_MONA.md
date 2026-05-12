@@ -15,7 +15,6 @@ Upload the `mona/` directory to your MONA project. The required files are:
 | `clogit_newton_sparse.cpp` | **NEW v0.4** Sparse-X Newton kernel (CSR row walk) |
 | `clogit_sandwich.cpp` | C++ clustered sandwich variance (dense) |
 | `clogit_sandwich_sparse.cpp` | **NEW v0.4** Sparse-X cluster sandwich |
-| `csr_matrix.h` | **NEW v0.4** Shared CSR header for both sparse kernels |
 | `fastclogit.R` | Core fitting function (auto-dispatches dense/sparse) |
 | `fastclogit_methods.R` | S3 methods: summary, print, coef, vcov, confint, tidy |
 | `fclogit.R` | Formula interface — main entry for most users |
@@ -235,11 +234,19 @@ within some strata).
 latest `fastclogit_methods.R` (fixes an R 4.5.x cbind naming issue).
 
 **"could not find function clogit_fit_sparse_cpp"** — `load_fastclogit.R`
-didn't compile the sparse files. Confirm `clogit_newton_sparse.cpp`,
-`clogit_sandwich_sparse.cpp`, and `csr_matrix.h` are in the same
-directory and re-run `source("load_fastclogit.R")`. If you're on the
-dense-only setup intentionally, pass a dense `matrix` (not a `sparseMatrix`)
-to `fastclogit()`.
+didn't compile the sparse files. Confirm `clogit_newton_sparse.cpp` and
+`clogit_sandwich_sparse.cpp` are in the same directory and re-run
+`source("load_fastclogit.R")`. If you're on the dense-only setup
+intentionally, pass a dense `matrix` (not a `sparseMatrix`) to
+`fastclogit()`.
+
+**"csr_matrix.h: No such file or directory" during compile** — this was
+a bug in v0.4.0 (the sparse Newton .cpp originally included a separate
+header). v0.4.1+ inlines the CSR struct directly into both sparse `.cpp`
+files, so the header is no longer needed. Update your MONA copies of
+`clogit_newton_sparse.cpp` and delete any old `csr_matrix.h`. The root
+cause was that R/make rewrote include paths containing `$` (common in
+UNC paths to administrative shares like `\\server\projekt\PROJID$\`).
 
 **Sparse fit returns slightly different coefficients than dense** — Both
 kernels converge to the same MLE; differences should be below ~1e-12 on
