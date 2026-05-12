@@ -392,7 +392,7 @@ Rcpp::List clogit_fit_sparse_cpp(
             // Without the third check, step-halving stalls at ill-conditioned
             // interaction directions get misdiagnosed as convergence.
             if (rel_ll_change < tol * 0.01 &&
-                grad_max       < tol * 1e4 &&
+                grad_max       < tol * 10.0 &&     // tightened 2026-05-13
                 prev_newton_step_norm < tol * 1e3) {
                 loglik = loglik_new;
                 converged = true;

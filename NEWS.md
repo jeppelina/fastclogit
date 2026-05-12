@@ -1,4 +1,45 @@
-# fastclogit 0.4.1
+# fastclogit 0.4.3
+
+## Bug fixes
+
+* **Secondary convergence criterion tightened.** Previously the secondary
+  criterion fired when `rel_ll_change < tol * 0.01 AND max|grad| < tol * 1e4
+  AND prev_unhalved_step_norm < tol * 1e3`. The grad threshold of `tol * 1e4`
+  was too generous for very large fits: at Paper-3 Step 4 scale
+  (n=70M rows, p=128, 718k strata) the optimizer reached `max|grad| ~ 5e-6`
+  at iteration 7 — well within `tol * 1e4 = 1e-2` — and stopped, even though
+  rare-cell interactions (Asia × decade2010) were still ~1 log-OR off the
+  MLE. Tightening the threshold to `tol * 10` keeps secondary as a safety
+  net for genuine stalls while requiring the gradient to be near primary
+  tolerance before declaring convergence.
+
+  Empirical: a 1M-row × 92-col factor-heavy simulated fit now converges at
+  `max|grad| = 6.65e-8` (below the new `tol * 10 = 1e-5` threshold) instead
+  of stopping at `~5e-6`. Coefficients match the `tol = 1e-8` fit to within
+  `5e-10` (machine epsilon for the problem size).
+
+  Same fix applied to both dense (`clogit_newton.cpp`) and sparse
+  (`clogit_newton_sparse.cpp`) kernels.
+
+# fastclogit 0.4.1 / 0.4.2 (consolidated in 0.4.3 release notes)
+
+## v0.4.2: 64-bit Armadillo indexing for Paper-3-scale sparse fits
+
+* The sparse path failed with `SpMat::init(): requested size is too large` at
+  n_rows × n_cols > 2³¹. Added `#define ARMA_64BIT_WORD 1` to all sparse
+  translation units and `PKG_CPPFLAGS = -DARMA_64BIT_WORD=1` to Makevars so
+  arma::sp_mat can index Paper-3-scale matrices (8.9 billion virtual cells).
+* Fixed integer overflow in the R-side density print (n × p as integers
+  overflowed at 70M × 128).
+
+## v0.4.1: MONA source-mode bundle now self-contained
+
+* The sparse Newton kernel originally `#include`d `csr_matrix.h`, which
+  Rcpp::sourceCpp could not find on MONA's UNC paths containing '$'.
+  Inlined the CsrMatrix struct directly into `mona/clogit_newton_sparse.cpp`
+  so MONA's source-mode install needs no separate header file.
+
+# fastclogit 0.4.0
 
 ## Bug fixes
 

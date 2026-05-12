@@ -126,11 +126,17 @@ Rcpp::List clogit_fit_cpp(
             double abs_ll_change = std::abs(loglik_new - loglik);
             double rel_ll_change = abs_ll_change / (std::abs(loglik) + 1e-10);
 
-            // Secondary (PATCHED 2026-05-12): require small unhalved Newton
-            // step too. Without this, step-halving stalls in ill-conditioned
-            // directions are misdiagnosed as convergence.
+            // Secondary (PATCHED 2026-05-12 + tightened 2026-05-13):
+            // Require small unhalved Newton step AND grad close to primary
+            // tol. The original grad threshold (tol * 1e4) was too generous:
+            // for Paper-3 Step 4 (n=70M, p=128) the optimizer reached
+            // max|grad|=5e-6 at iter 7 with small Newton step, well within
+            // the old tol*1e4 = 1e-2 cutoff, declaring convergence at a
+            // point where rare-cell interactions (Asia × decade2010) were
+            // still ~0.95 log-OR away from the MLE. Tightening to tol*10
+            // forces secondary to only fire near genuine convergence.
             if (rel_ll_change         < tol * 0.01 &&
-                grad_max              < tol * 1e4 &&
+                grad_max              < tol * 10.0 &&
                 prev_newton_step_norm < tol * 1e3) {
                 loglik = loglik_new;
                 converged = true;

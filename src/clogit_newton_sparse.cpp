@@ -335,12 +335,15 @@ Rcpp::List clogit_fit_sparse_cpp(
             const double abs_ll_change = std::abs(loglik_new - loglik);
             const double rel_ll_change = abs_ll_change / (std::abs(loglik) + 1e-10);
 
-            // Secondary (PATCHED): rel-ll small AND grad reasonably small AND
-            // previous Newton step's intended (unhalved) magnitude was small.
-            // Without the third check, step-halving stalls at ill-conditioned
-            // interaction directions get misdiagnosed as convergence.
+            // Secondary (PATCHED 2026-05-12 + tightened 2026-05-13):
+            // The grad threshold was originally tol * 1e4. Empirically too
+            // generous at Paper-3 scale (n=70M, p=128): the optimizer
+            // converged at iter 7 with max|grad|=5e-6 (well under tol*1e4)
+            // while rare-cell interactions were still ~1 log-OR off the MLE.
+            // Tightening to tol*10 keeps secondary as a safety net while
+            // requiring grad close to primary tolerance.
             if (rel_ll_change < tol * 0.01 &&
-                grad_max       < tol * 1e4 &&
+                grad_max       < tol * 10.0 &&
                 prev_newton_step_norm < tol * 1e3) {
                 loglik = loglik_new;
                 converged = true;
