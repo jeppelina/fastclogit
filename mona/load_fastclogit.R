@@ -60,29 +60,58 @@ cpp_sandwich_sparse <- file.path(FASTCLOGIT_DIR, "clogit_sandwich_sparse.cpp")
 if (!file.exists(cpp_newton))   stop("Cannot find: ", cpp_newton)
 if (!file.exists(cpp_sandwich)) stop("Cannot find: ", cpp_sandwich)
 
-cat("  Compiling clogit_newton.cpp (dense)... ")
-Rcpp::sourceCpp(cpp_newton)
-cat("OK\n")
+# Rcpp::sourceCpp() compiles in a temp directory and does NOT add the
+# source file's directory to the include path. The sparse kernels need
+# csr_matrix.h, which lives next to the .cpp files, so we point the
+# compiler at FASTCLOGIT_DIR via PKG_CPPFLAGS during the compile, then
+# restore.
+#
+# Note: Rcpp::sourceCpp() exports compiled functions into its caller's
+# environment by default. We pass env = globalenv() explicitly so the
+# functions land in the same place regardless of whether load_fastclogit.R
+# is sourced or run via Rscript.
+.old_pkg_cppflags <- Sys.getenv("PKG_CPPFLAGS", unset = NA_character_)
+.include_flag <- paste0("-I\"",
+                        normalizePath(FASTCLOGIT_DIR, winslash = "/",
+                                       mustWork = TRUE), "\"")
+Sys.setenv(PKG_CPPFLAGS = paste(.include_flag,
+                                  if (is.na(.old_pkg_cppflags)) ""
+                                  else .old_pkg_cppflags))
 
-if (file.exists(cpp_newton_sparse)) {
-  cat("  Compiling clogit_newton_sparse.cpp... ")
-  Rcpp::sourceCpp(cpp_newton_sparse)
+tryCatch({
+  cat("  Compiling clogit_newton.cpp (dense)... ")
+  Rcpp::sourceCpp(cpp_newton, env = globalenv())
   cat("OK\n")
-} else {
-  cat("  (skipping sparse Newton kernel — file not present)\n")
-}
 
-cat("  Compiling clogit_sandwich.cpp (dense)... ")
-Rcpp::sourceCpp(cpp_sandwich)
-cat("OK\n")
+  if (file.exists(cpp_newton_sparse)) {
+    cpp_h <- file.path(FASTCLOGIT_DIR, "csr_matrix.h")
+    if (!file.exists(cpp_h))
+      stop("Cannot find csr_matrix.h next to clogit_newton_sparse.cpp at ",
+           FASTCLOGIT_DIR, " — upload it alongside the .cpp files.")
+    cat("  Compiling clogit_newton_sparse.cpp... ")
+    Rcpp::sourceCpp(cpp_newton_sparse, env = globalenv())
+    cat("OK\n")
+  } else {
+    cat("  (skipping sparse Newton kernel — file not present)\n")
+  }
 
-if (file.exists(cpp_sandwich_sparse)) {
-  cat("  Compiling clogit_sandwich_sparse.cpp... ")
-  Rcpp::sourceCpp(cpp_sandwich_sparse)
+  cat("  Compiling clogit_sandwich.cpp (dense)... ")
+  Rcpp::sourceCpp(cpp_sandwich, env = globalenv())
   cat("OK\n")
-} else {
-  cat("  (skipping sparse sandwich — file not present)\n")
-}
+
+  if (file.exists(cpp_sandwich_sparse)) {
+    cat("  Compiling clogit_sandwich_sparse.cpp... ")
+    Rcpp::sourceCpp(cpp_sandwich_sparse, env = globalenv())
+    cat("OK\n")
+  } else {
+    cat("  (skipping sparse sandwich — file not present)\n")
+  }
+}, finally = {
+  # Restore PKG_CPPFLAGS so it doesn't leak into later sourceCpp() calls.
+  if (is.na(.old_pkg_cppflags)) Sys.unsetenv("PKG_CPPFLAGS")
+  else                          Sys.setenv(PKG_CPPFLAGS = .old_pkg_cppflags)
+})
+rm(.old_pkg_cppflags, .include_flag)
 
 # --- Source R files ---
 .source_if_exists <- function(filename, label = NULL) {
