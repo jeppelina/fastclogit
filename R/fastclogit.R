@@ -89,13 +89,9 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   }
 
   # --- Sort by strata (required for group boundary computation) ---
+  # dgCMatrix row-indexing via [i, , drop=FALSE] works the same as for dense.
   ord <- order(strata)
-  if (is_sparse) {
-    # dgCMatrix row-indexing is supported via [i, , drop = FALSE]
-    X <- X[ord, , drop = FALSE]
-  } else {
-    X <- X[ord, , drop = FALSE]
-  }
+  X       <- X[ord, , drop = FALSE]
   choice  <- choice[ord]
   strata_sorted <- strata[ord]
   offset  <- offset[ord]
@@ -123,13 +119,17 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
 
   # --- Check for zero-variance columns ---
   if (is_sparse) {
-    # For sparse X, compute per-column variance without densifying:
     # var(col_j) = (sum(x_j^2) - n*mean(x_j)^2) / (n - 1).
-    # If a column has no non-zeros at all, variance is 0.
-    csums  <- Matrix::colSums(X)
-    csums2 <- Matrix::colSums(X * X)  # element-wise square via methods
-    means  <- csums / n
-    col_vars <- (csums2 - n * means^2) / (n - 1)
+    # Direct @x walk: avoids the 3.8-GB intermediate that `X * X` materialises
+    # for large dgCMatrix at MONA scale.
+    csums <- Matrix::colSums(X)
+    col_widths <- diff(X@p)
+    csums2 <- numeric(p)
+    if (length(X@x)) {
+      col_for_x <- rep.int(seq_len(p), col_widths)
+      csums2[] <- tapply(X@x * X@x, col_for_x, sum, default = 0)[seq_len(p)]
+    }
+    col_vars <- (csums2 - (csums^2) / n) / (n - 1)
   } else {
     col_vars <- apply(X, 2, var)
   }
@@ -142,16 +142,14 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   }
 
   # --- Fit via C++ (dispatch on storage type) ---
-  if (is_sparse) {
-    if (verbose) message("Using sparse C++ kernel (nnz = ",
-                          format(length(X@x), big.mark = ","), ", density = ",
-                          sprintf("%.2f%%", 100 * length(X@x) / (n * p)), ")")
-    fit <- clogit_fit_sparse_cpp(X, choice, offset, group_start, group_size,
-                                   as.integer(max_iter), tol, verbose)
-  } else {
-    fit <- clogit_fit_cpp(X, choice, offset, group_start, group_size,
-                           as.integer(max_iter), tol, verbose)
-  }
+  fit_fn      <- if (is_sparse) clogit_fit_sparse_cpp     else clogit_fit_cpp
+  sandwich_fn <- if (is_sparse) clogit_sandwich_sparse_cpp else clogit_sandwich_cpp
+  if (is_sparse && verbose)
+    message("Using sparse C++ kernel (nnz = ",
+            format(length(X@x), big.mark = ","), ", density = ",
+            sprintf("%.2f%%", 100 * length(X@x) / (n * p)), ")")
+  fit <- fit_fn(X, choice, offset, group_start, group_size,
+                as.integer(max_iter), tol, verbose)
 
   # --- Attach column names ---
   cnames <- colnames(X)
@@ -170,17 +168,10 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
     # Each group's cluster = cluster of its first row (ego row)
     group_cluster <- cluster_fac[group_start + 1L]
 
-    if (is_sparse) {
-      sandwich <- clogit_sandwich_sparse_cpp(
-        X, choice, offset, group_start, group_size,
-        group_cluster, fit$coefficients, fit$vcov
-      )
-    } else {
-      sandwich <- clogit_sandwich_cpp(
-        X, choice, offset, group_start, group_size,
-        group_cluster, fit$coefficients, fit$vcov
-      )
-    }
+    sandwich <- sandwich_fn(
+      X, choice, offset, group_start, group_size,
+      group_cluster, fit$coefficients, fit$vcov
+    )
 
     fit$vcov_robust <- sandwich$vcov_robust
     rownames(fit$vcov_robust) <- colnames(fit$vcov_robust) <- cnames

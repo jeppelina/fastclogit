@@ -32,51 +32,8 @@
 #include <vector>
 #include <limits>
 #include <cmath>
+#include "csr_matrix.h"
 // [[Rcpp::depends(RcppArmadillo)]]
-
-// ===========================================================================
-// CSR sparse representation (row-major), built once from the CSC dgCMatrix.
-// ===========================================================================
-struct CsrMatrix {
-    int n_rows;
-    int n_cols;
-    std::vector<int>    row_ptr;  // size n_rows + 1
-    std::vector<int>    col_idx;  // size nnz
-    std::vector<double> values;   // size nnz
-
-    explicit CsrMatrix(const arma::sp_mat& X) {
-        n_rows = static_cast<int>(X.n_rows);
-        n_cols = static_cast<int>(X.n_cols);
-
-        // Count nnz per row in one pass over CSC
-        std::vector<int> row_nnz(n_rows, 0);
-        for (arma::sp_mat::const_iterator it = X.begin(); it != X.end(); ++it) {
-            row_nnz[it.row()]++;
-        }
-        // Prefix sum -> row_ptr
-        row_ptr.resize(n_rows + 1);
-        row_ptr[0] = 0;
-        for (int i = 0; i < n_rows; ++i) {
-            row_ptr[i + 1] = row_ptr[i] + row_nnz[i];
-        }
-        const int nnz = row_ptr[n_rows];
-        col_idx.resize(nnz);
-        values.resize(nnz);
-
-        // Second pass: fill col_idx / values, using a per-row write cursor
-        std::vector<int> wpos(n_rows, 0);
-        for (int j = 0; j < n_cols; ++j) {
-            for (arma::sp_mat::const_col_iterator it = X.begin_col(j);
-                 it != X.end_col(j); ++it) {
-                const int i   = it.row();
-                const int pos = row_ptr[i] + wpos[i];
-                col_idx[pos]  = j;
-                values[pos]   = (*it);
-                wpos[i]++;
-            }
-        }
-    }
-};
 
 // ===========================================================================
 // Inline helpers — per-iteration accumulators
@@ -102,42 +59,57 @@ static inline void csr_mat_vec_plus_offset(
     }
 }
 
-// Compute log-likelihood at given beta (used inside step-halving).
-// Reuses provided eta workspace.
-static inline double compute_loglik(
-    const CsrMatrix& X,
-    const arma::vec& beta,
-    const arma::vec& offset,
+// Compute log-likelihood from a PRE-COMPUTED eta vector (no matvec).
+// Used inside step-halving where we already have eta = X*beta_new + offset
+// from the cached X*delta trick.
+static inline double compute_loglik_from_eta(
+    const arma::vec& eta,
     const arma::ivec& chosen,
     const arma::ivec& group_start,
-    const arma::ivec& group_size,
-    arma::vec& eta_ws)
+    const arma::ivec& group_size)
 {
-    csr_mat_vec_plus_offset(X, beta, offset, eta_ws);
     const int G = group_start.n_elem;
     double ll = 0.0;
     for (int j = 0; j < G; ++j) {
         const int start = group_start(j);
         const int K     = group_size(j);
-        double max_eta = eta_ws(start);
+        double max_eta = eta(start);
         for (int k = 1; k < K; ++k) {
-            const double v = eta_ws(start + k);
+            const double v = eta(start + k);
             if (v > max_eta) max_eta = v;
         }
         double sum_exp = 0.0;
         for (int k = 0; k < K; ++k) {
-            sum_exp += std::exp(eta_ws(start + k) - max_eta);
+            sum_exp += std::exp(eta(start + k) - max_eta);
         }
         const double lse = max_eta + std::log(sum_exp);
-        // Find chosen
         for (int k = 0; k < K; ++k) {
             if (chosen(start + k) == 1) {
-                ll += eta_ws(start + k) - lse;
+                ll += eta(start + k) - lse;
                 break;
             }
         }
     }
     return ll;
+}
+
+// X * delta only (no offset), into pre-allocated dst. Used to cache the
+// Newton-direction matvec across step-halving iterations.
+static inline void csr_mat_vec(
+    const CsrMatrix& X,
+    const arma::vec& delta,
+    arma::vec& dst)
+{
+    const int n = X.n_rows;
+    for (int i = 0; i < n; ++i) {
+        double e = 0.0;
+        const int s = X.row_ptr[i];
+        const int t = X.row_ptr[i + 1];
+        for (int q = s; q < t; ++q) {
+            e += X.values[q] * delta(X.col_idx[q]);
+        }
+        dst(i) = e;
+    }
 }
 
 // Compute gradient + Hessian at given beta, plus log-likelihood.
@@ -160,19 +132,20 @@ static inline void compute_grad_hess(
     arma::vec& eta_ws,
     arma::vec& prob_ws,
     arma::vec& xbar_k_ws,
+    arma::mat& H1_ws,        // p×p workspace, zero'd here
+    arma::mat& H2_ws,        // p×p workspace, zero'd here
+    std::vector<int>& nz_xbar_ws,
     arma::vec& grad,
     arma::mat& hess,
     double& loglik_out)
 {
-    const int p = X.n_cols;
     const int G = group_start.n_elem;
 
-    // eta
     csr_mat_vec_plus_offset(X, beta, offset, eta_ws);
 
     grad.zeros();
-    arma::mat H1(p, p, arma::fill::zeros);
-    arma::mat H2(p, p, arma::fill::zeros);
+    H1_ws.zeros();   // workspace — caller owns the allocation
+    H2_ws.zeros();
 
     loglik_out = 0.0;
 
@@ -208,11 +181,12 @@ static inline void compute_grad_hess(
         }
         if (c_idx < 0) continue;  // Skip strata with no choice (shouldn't happen post-validation)
 
-        // Build xbar_k = sum_i in k of prob_i * x_i (dense p-vec)
-        // AND accumulate H1 = sum_i in k of prob_i * x_i * x_i.t()
-        // Reset xbar_k via tracked-indices trick to avoid O(p) zeroing per stratum
-        std::vector<int> nz_xbar;
-        nz_xbar.reserve(64);
+        // Build xbar_k AND accumulate H1 in a single CSR row pass per row.
+        // The tracked-indices trick avoids the O(p) cost of zeroing xbar_k_ws.
+        // NOTE: cancelling contributions can push the same index twice; the
+        // resulting H2 and gradient contributions are 0, and the final reset
+        // is idempotent. Harmless.
+        nz_xbar_ws.clear();   // capacity retained from prior strata
 
         for (int k = 0; k < K; ++k) {
             const int    row = start + k;
@@ -224,12 +198,12 @@ static inline void compute_grad_hess(
             for (int q = s; q < t; ++q) {
                 const int    col = X.col_idx[q];
                 const double val = X.values[q];
-                if (xbar_k_ws(col) == 0.0) nz_xbar.push_back(col);
+                if (xbar_k_ws(col) == 0.0) nz_xbar_ws.push_back(col);
                 xbar_k_ws(col) += p_i * val;
             }
 
-            // H1 += p_i * x_i * x_i.t() (outer product of sparse row)
-            // Symmetric; we fill both halves for simplicity (matches dense kernel).
+            // H1 += p_i * x_i * x_i.t() (full symmetric fill — branch-free
+            // inner loop, hot path).
             for (int q1 = s; q1 < t; ++q1) {
                 const int    a    = X.col_idx[q1];
                 const double v1   = X.values[q1];
@@ -237,7 +211,7 @@ static inline void compute_grad_hess(
                 for (int q2 = s; q2 < t; ++q2) {
                     const int    b  = X.col_idx[q2];
                     const double v2 = X.values[q2];
-                    H1(a, b) += piv1 * v2;
+                    H1_ws(a, b) += piv1 * v2;
                 }
             }
         }
@@ -247,27 +221,29 @@ static inline void compute_grad_hess(
         for (int q = X.row_ptr[row_c]; q < X.row_ptr[row_c + 1]; ++q) {
             grad(X.col_idx[q]) += X.values[q];
         }
-        for (int idx : nz_xbar) {
+        for (int idx : nz_xbar_ws) {
             grad(idx) -= xbar_k_ws(idx);
         }
 
-        // H2 += xbar_k * xbar_k.t() — restrict to nonzero indices for speed
-        const size_t nnz_x = nz_xbar.size();
+        // H2 += xbar_k * xbar_k.t() — restrict to nonzero indices.
+        // Fill both halves (nnz_x is small; branch-free inner loop wins
+        // over the upper-only variant at this size).
+        const size_t nnz_x = nz_xbar_ws.size();
         for (size_t a = 0; a < nnz_x; ++a) {
-            const int    ia = nz_xbar[a];
+            const int    ia = nz_xbar_ws[a];
             const double xa = xbar_k_ws(ia);
             for (size_t b = 0; b < nnz_x; ++b) {
-                const int ib = nz_xbar[b];
-                H2(ia, ib) += xa * xbar_k_ws(ib);
+                const int ib = nz_xbar_ws[b];
+                H2_ws(ia, ib) += xa * xbar_k_ws(ib);
             }
         }
 
-        // Reset xbar_k entries we touched (no O(p) zeros call)
-        for (int idx : nz_xbar) xbar_k_ws(idx) = 0.0;
+        // Reset xbar_k entries we touched (cheaper than O(p) zeros())
+        for (int idx : nz_xbar_ws) xbar_k_ws(idx) = 0.0;
     }
 
-    // hess = -(H1 - H2) = H2 - H1
-    hess = H2 - H1;
+    // hess = H2 - H1. Both H_ws matrices are symmetric (both halves filled).
+    hess = H2_ws - H1_ws;
 }
 
 // ===========================================================================
@@ -304,6 +280,10 @@ Rcpp::List clogit_fit_sparse_cpp(
     arma::vec eta_ws(n);
     arma::vec prob_ws(n);
     arma::vec xbar_k_ws(p, arma::fill::zeros);
+    arma::mat H1_ws(p, p);
+    arma::mat H2_ws(p, p);
+    std::vector<int> nz_xbar_ws;
+    nz_xbar_ws.reserve(64);
 
     double loglik = 0.0;
     int iter = 0;
@@ -323,15 +303,14 @@ Rcpp::List clogit_fit_sparse_cpp(
         compute_grad_hess(X, beta, offset, chosen,
                           group_start, group_size,
                           eta_ws, prob_ws, xbar_k_ws,
+                          H1_ws, H2_ws, nz_xbar_ws,
                           grad, hess, loglik_new);
 
+        const double grad_max = arma::abs(grad).max();
         if (verbose) {
             Rprintf("Iter %d: loglik = %.8f, max|grad| = %.2e, prev_step = %.2e\n",
-                    iter + 1, loglik_new, arma::abs(grad).max(),
-                    prev_newton_step_norm);
+                    iter + 1, loglik_new, grad_max, prev_newton_step_norm);
         }
-
-        const double grad_max = arma::abs(grad).max();
 
         // Primary: absolute gradient norm
         if (grad_max < tol) {
@@ -406,20 +385,29 @@ Rcpp::List clogit_fit_sparse_cpp(
         // secondary convergence check, see patch note above)
         prev_newton_step_norm = arma::abs(delta).max();
 
-        // Step-halving
+        // Cache X * delta once so step-halving's loglik evaluation is
+        // O(n) (vector add) instead of O(nnz) (full matvec) per halving.
+        // Refresh eta_ws to its current-beta value for use as the base.
+        arma::vec Xdelta(X.n_rows);
+        csr_mat_vec(X, delta, Xdelta);
+        // eta at current beta — recompute once so subsequent halvings can
+        // form eta_new = eta + step * Xdelta cheaply.
+        csr_mat_vec_plus_offset(X, beta, offset, eta_ws);
+
         double step_size = 1.0;
         arma::vec beta_new = beta + step_size * delta;
+        arma::vec eta_new  = eta_ws + step_size * Xdelta;
         int halving_count = 0;
         const int max_halving = 20;
 
         if (iter > 0) {
             while (halving_count < max_halving) {
-                const double ll_candidate = compute_loglik(
-                    X, beta_new, offset, chosen,
-                    group_start, group_size, eta_ws);
+                const double ll_candidate = compute_loglik_from_eta(
+                    eta_new, chosen, group_start, group_size);
                 if (ll_candidate >= loglik - 1e-10) break;
                 step_size *= 0.5;
                 beta_new = beta + step_size * delta;
+                eta_new  = eta_ws + step_size * Xdelta;
                 halving_count++;
             }
             if (halving_count > 0 && verbose) {
@@ -436,6 +424,7 @@ Rcpp::List clogit_fit_sparse_cpp(
         compute_grad_hess(X, beta, offset, chosen,
                           group_start, group_size,
                           eta_ws, prob_ws, xbar_k_ws,
+                          H1_ws, H2_ws, nz_xbar_ws,
                           grad, hess, loglik_final);
         loglik = loglik_final;
     }
