@@ -8,6 +8,10 @@
 // Author: Jesper Lindmarker
 // License: MIT
 
+// Required for Paper-3-scale fits — see header comment in
+// clogit_newton_sparse.cpp. Both sparse translation units MUST share
+// this define or arma::sp_mat layouts diverge.
+#define ARMA_64BIT_WORD 1
 #include <RcppArmadillo.h>
 #include <vector>
 #include <cmath>

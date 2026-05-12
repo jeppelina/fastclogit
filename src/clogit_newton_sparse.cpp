@@ -28,6 +28,15 @@
 // Author: Jesper Lindmarker
 // License: MIT
 
+// Enable 64-bit Armadillo indexing BEFORE including RcppArmadillo.
+// Required for Paper-3-scale fits: arma::sp_mat's SpMat::init() checks
+// that n_rows * n_cols fits in uword. With the default 32-bit uword the
+// limit is ~4.3 billion cells; a 70M × 128 design matrix has ~8.9 billion
+// cells (even though only ~5% are non-zero, Armadillo still checks the
+// virtual dim). 64-bit uword raises the ceiling to 1.8e19. All sparse
+// translation units MUST have this define before the include, or they
+// disagree on sp_mat layout and corrupt memory across the Rcpp boundary.
+#define ARMA_64BIT_WORD 1
 #include <RcppArmadillo.h>
 #include <vector>
 #include <limits>

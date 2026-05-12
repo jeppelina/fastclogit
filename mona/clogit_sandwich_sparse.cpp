@@ -8,6 +8,9 @@
 // Author: Jesper Lindmarker
 // License: MIT
 
+// Required for Paper-3-scale fits — see header comment in
+// clogit_newton_sparse.cpp. Both sparse MONA files MUST share this define.
+#define ARMA_64BIT_WORD 1
 #include <RcppArmadillo.h>
 #include <vector>
 #include <cmath>

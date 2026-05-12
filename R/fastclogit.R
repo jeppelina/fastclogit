@@ -177,10 +177,14 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   # --- Fit via C++ (dispatch on storage type) ---
   fit_fn      <- if (is_sparse) clogit_fit_sparse_cpp     else clogit_fit_cpp
   sandwich_fn <- if (is_sparse) clogit_sandwich_sparse_cpp else clogit_sandwich_cpp
-  if (is_sparse && verbose)
+  if (is_sparse && verbose) {
+    # Coerce to numeric BEFORE multiplying — n * p as integers overflows
+    # at Paper-3 scale (70M * 128 ~ 8.9e9 > .Machine$integer.max).
+    cells_dbl <- as.numeric(n) * as.numeric(p)
     message("Using sparse C++ kernel (nnz = ",
             format(length(X@x), big.mark = ","), ", density = ",
-            sprintf("%.2f%%", 100 * length(X@x) / (n * p)), ")")
+            sprintf("%.2f%%", 100 * length(X@x) / cells_dbl), ")")
+  }
   fit <- fit_fn(X, choice, offset, group_start, group_size,
                 as.integer(max_iter), tol, verbose)
 

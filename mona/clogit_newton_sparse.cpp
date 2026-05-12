@@ -28,6 +28,13 @@
 // Author: Jesper Lindmarker
 // License: MIT
 
+// Enable 64-bit Armadillo indexing BEFORE including RcppArmadillo.
+// Required for Paper-3-scale fits: arma::sp_mat's SpMat::init() checks
+// that n_rows * n_cols fits in uword. With default 32-bit uword the
+// limit is ~4.3 billion cells; a 70M × 128 design has ~8.9 billion
+// virtual cells. 64-bit uword raises the limit to 1.8e19. Both sparse
+// MONA files MUST share this define.
+#define ARMA_64BIT_WORD 1
 #include <RcppArmadillo.h>
 #include <vector>
 #include <limits>
