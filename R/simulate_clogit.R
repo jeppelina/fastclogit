@@ -1,25 +1,31 @@
-#' Simulate Conditional Logit Data (Partner Choice DGP)
+#' Simulate Conditional Logit Data
 #'
-#' Generates synthetic data mimicking the LISA partner choice pipeline:
-#' stratified importance sampling with McFadden/Manski offsets,
-#' factor and continuous predictors, and clustered egos.
+#' Generates synthetic data with the structure of a large sampled-alternatives
+#' choice problem: stratified importance sampling with McFadden/Manski
+#' offsets, a mix of continuous and factor predictors, and choosers who may
+#' contribute several choice sets (clusters).
 #'
-#' @param n_egos Integer. Number of choice sets (egos).
+#' Variable names are deliberately generic (`x1`-`x4`, `f1`, `f2`). Supply your
+#' own `beta_continuous` / `beta_factor` to change the names, the coefficients
+#' or the number of predictors.
+#'
+#' @param n_egos Integer. Number of choice sets.
 #' @param n_alts Integer. Alternatives per choice set (including chosen).
 #' @param beta_continuous Numeric vector. True coefficients for continuous
 #'   predictors. Length determines number of continuous predictors.
-#'   Default mimics: lnDist(-0.5), n_years_same_cfar(1.0),
-#'   n_years_same_peorg(0.8), n_years_same_uni(0.6).
+#'   Defaults: x1 = -0.5, x2 = 1.0, x3 = 0.8, x4 = 0.6.
 #' @param beta_factor List of numeric vectors. True coefficients for factor
 #'   dummy variables (excluding reference level). Names become factor names.
-#'   Default mimics Edudiff3 (4 levels, ref=1) and AgeDiffcat (5 levels, ref=1).
+#'   Defaults: f1 (4 levels, reference = 1) and f2 (5 levels, reference = 1).
 #' @param use_offset Logical. Simulate McFadden/Manski stratified sampling?
-#' @param strata_props Numeric vector of length 5. Sampling proportions per
-#'   stratum (Cfar/PeOrg/Uni/County/Rest). Default: c(5, 10, 10, 60, 15)/100.
+#' @param strata_props Numeric vector of length 5. Sampling proportion for
+#'   each of the five sampling strata. Default: c(5, 10, 10, 60, 15)/100, i.e.
+#'   four narrow strata plus a large residual one.
 #' @param strata_popsizes Numeric vector of length 5. Typical population sizes
 #'   per stratum for offset computation.
-#' @param cluster_ratio Numeric > 0. Ratio of egos to unique cluster IDs.
-#'   1.0 = each ego is unique; 1.5 = some egos appear ~1.5 times on average.
+#' @param cluster_ratio Numeric > 0. Ratio of choice sets to unique cluster
+#'   IDs. 1.0 = every choice set is its own cluster; 1.5 = clusters contribute
+#'   about 1.5 choice sets on average.
 #' @param seed Integer. Random seed.
 #'
 #' @return A list with components:
@@ -42,18 +48,18 @@
 simulate_clogit_data <- function(
   n_egos        = 5000L,
   n_alts        = 100L,
-  beta_continuous = c(lnDist = -0.5,
-                      n_years_same_cfar = 1.0,
-                      n_years_same_peorg = 0.8,
-                      n_years_same_uni = 0.6),
+  beta_continuous = c(x1 = -0.5,
+                      x2 = 1.0,
+                      x3 = 0.8,
+                      x4 = 0.6),
   beta_factor   = list(
-    Edudiff3   = c(Edudiff3_BothHigh = 0.8,
-                   Edudiff3_BothLow = 0.4,
-                   Edudiff3_Missing = -0.3),
-    AgeDiffcat = c(AgeDiffcat_2 = -0.2,
-                   AgeDiffcat_3 = -0.5,
-                   AgeDiffcat_4 = -0.8,
-                   AgeDiffcat_5 = -1.2)
+    f1   = c(f1_b = 0.8,
+                   f1_c = 0.4,
+                   f1_d = -0.3),
+    f2 = c(f2_b = -0.2,
+                   f2_c = -0.5,
+                   f2_d = -0.8,
+                   f2_e = -1.2)
   ),
   use_offset    = TRUE,
   strata_props  = c(0.05, 0.10, 0.10, 0.60, 0.15),
@@ -67,7 +73,7 @@ simulate_clogit_data <- function(
   n_continuous <- length(beta_continuous)
 
   # --- True beta vector ---
-  # Use recursive=FALSE to avoid prepending list names (e.g., "Edudiff3.Edudiff3_BothHigh")
+  # Use recursive=FALSE to avoid prepending list names (e.g., "f1.f1_b")
   beta_factor_vec <- unlist(beta_factor, use.names = FALSE)
   names(beta_factor_vec) <- unlist(lapply(beta_factor, names))
   beta_true <- c(beta_continuous, beta_factor_vec)
@@ -77,14 +83,14 @@ simulate_clogit_data <- function(
   strata_id <- rep(seq_len(n_egos), each = n_alts)
 
   # --- Continuous predictors ---
-  # lnDist: log-normal-ish (shifted, so variation is realistic)
+  # x1: log-normal-ish (shifted, so variation is realistic)
   # Institution overlaps: mostly 0, some positive (mimics count data)
   X_cont <- matrix(0, nrow = n_total, ncol = n_continuous)
   colnames(X_cont) <- names(beta_continuous)
 
   for (i in seq_len(n_continuous)) {
     nm <- names(beta_continuous)[i]
-    if (grepl("lnDist", nm)) {
+    if (grepl("x1", nm)) {
       # Log distance: centered around 8-10 (few km to hundreds of km)
       X_cont[, i] <- rnorm(n_total, mean = 9, sd = 2)
     } else if (grepl("n_years", nm)) {

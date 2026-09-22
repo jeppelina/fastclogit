@@ -17,7 +17,7 @@ print(round(sim$beta_true, 3))
 # --- 2. Formula interface ---
 cat("\n2. Fitting model with formula interface...\n")
 fit <- fclogit(
-  choice ~ lnDist + n_years_same_cfar + n_years_same_peorg + n_years_same_uni,
+  choice ~ x1 + x2 + x3 + x4,
   data    = d,
   strata  = "strata_id",
   cluster = "cluster_id",

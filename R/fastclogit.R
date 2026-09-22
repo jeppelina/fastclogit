@@ -15,11 +15,12 @@
 #'   to have been compiled (automatic in the installed package; via
 #'   `load_fastclogit.R` in source mode).
 #' @param choice Integer or logical vector (n). 1/TRUE for chosen alternative.
-#' @param strata Vector (n). Group/choice-set identifier (e.g., CoupleId).
+#' @param strata Vector (n). Group/choice-set identifier.
 #' @param offset Numeric vector (n) or NULL. McFadden/Manski correction.
 #'   Enters the linear predictor as a fixed shift: eta = X*beta + offset.
 #' @param cluster Vector or NULL. Cluster identifier for sandwich SEs
-#'   (e.g., LopNrEgo). If NULL, only model-based SEs are computed.
+#'   (e.g. a person id when each person contributes several choice sets).
+#'   If NULL, only model-based SEs are computed.
 #' @param max_iter Integer. Maximum Newton-Raphson iterations.
 #' @param tol Numeric. Convergence tolerance on max absolute gradient
 #'   (tier-1 / tier-2 primary criterion).
@@ -254,9 +255,9 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   # The sandwich takes the cluster of each group's FIRST row, so a stratum
   # spanning two clusters is assigned wholly to one of them and the robust SEs
   # are computed for a clustering the caller did not ask for. Silent until
-  # 2026-09-22. In the partner-choice papers a stratum is an ego's choice set
-  # and the cluster is the ego, so this holds -- but by convention, not by
-  # construction, and a user clustering on something coarser (a county, say)
+  # 2026-09-22. In the common setup -- a stratum is one chooser's choice set and
+  # the cluster is the chooser -- this holds, but by convention, not by
+  # construction, and a user clustering on something coarser (a region, say)
   # gets quietly wrong standard errors.
   if (!is.null(cluster)) {
     cl_sorted <- cluster[ord]
@@ -275,7 +276,7 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   # stratum but varies across strata (an ego-side / decision-maker covariate)
   # passes this check and is not identified in conditional logit.
   # survival::clogit returns NA for such terms; we currently do not.
-  # See Research/FASTCLOGIT_MERGE_MAP.md section 5a.
+  # See the 'Identification' notes in ?fastclogit and the package README.
   if (is_sparse) {
     # var(col_j) = (sum(x_j^2) - n*mean(x_j)^2) / (n - 1).
     # Walk dgCMatrix slots directly: avoids the 3.8-GB intermediate that
@@ -347,7 +348,7 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
                        fit$best_loglik_iter),
     iter_max  = sprintf("did NOT converge: hit max_iter=%d with max|grad|=%.2e (returning best-loglik beta from iter %d)",
                        max_iter, max(abs(fit$gradient)), fit$best_loglik_iter),
-    line_search = sprintf("did NOT converge: line search could not improve the log-likelihood at iter %d (max|grad|=%.2e). The Newton direction stopped being an ascent direction, usually after an overlarge early step. See Research/KNOWN_ISSUES_fastclogit.md",
+    line_search = sprintf("did NOT converge: line search could not improve the log-likelihood at iter %d (max|grad|=%.2e). The Newton direction stopped being an ascent direction, usually after an overlarge early step. See vignette('convergence-and-diagnostics')",
                        fit$iterations, max(abs(fit$gradient))),
     flat_optimum = sprintf("converged: the line search could not improve the log-likelihood and max|grad|=%.2e is below the plateau floor, i.e. a flat optimum, at iter %d",
                        max(abs(fit$gradient)), fit$iterations),

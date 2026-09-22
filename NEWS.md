@@ -1,15 +1,14 @@
 # fastclogit 0.5.0
 
-Brings the package up to the kernel the papers have been running since
-September 2026. Everything below already existed in
-`Paper 4/MONA scripts/lib/` and its byte-identical copies in Papers 1 and 3;
-this release is the merge back, plus two bugs found on the way.
+Brings the package up to the kernel that production deployments have been
+running since September 2026. Everything below already existed in those
+working copies; this release merges it back, plus two bugs found on the way.
 
 ## Bug fixes (correctness)
 
 * **The line search was skipped on the first Newton iteration.** Starting from
   beta = 0 on a problem with a McFadden-Manski offset of wide within-stratum
-  spread, the opening step can be enormous: in Paper 4 it had norm ~900 and
+  spread, the opening step can be enormous: one measured case had norm ~900 and
   drove the log-likelihood from -5.5e6 to -4.1e8, into a region where the
   softmax saturates, the observed information collapses toward zero and the
   Newton direction stops being an ascent direction. The gradient then sat
@@ -33,7 +32,7 @@ this release is the merge back, plus two bugs found on the way.
   a maximum and converges with `convergence_criterion = "flat_optimum"`; above
   it the Newton direction has genuinely died and the fit stops. The first
   version of the guard broke unconditionally and mislabelled finished fits,
-  which cost a men's KHB decomposition on 2026-09-12.
+  which cost a downstream decomposition that depended on it.
 
 * **`$coefficients` is now the best-loglik beta**, with the gradient, Hessian
   and log-likelihood recomputed there, matching `survival::clogit`. Previously
@@ -186,9 +185,9 @@ KHB decomposition recovers a known mediation structure.
   a ridge-determined value with a meaningless standard error, and
   `$vcov_singular` does **not** flag it, because the ridge rescues the
   inversion before it can. Drop such columns before fitting. See
-  `Research/FASTCLOGIT_MERGE_MAP.md` section 5a.
+  the "Limitations" section of the README.
 
-* The dense/sparse divergence observed in Paper 3 at n=100 (dense converging to
+* The dense/sparse divergence observed in production at n=100 (dense converging to
   a log-likelihood 271 units below sparse and `survival`, never reproduced
   locally) has not been retested since the line-search fix.
 
@@ -277,8 +276,8 @@ KHB decomposition recovers a known mediation structure.
   Added a third check on the unhalved Newton step magnitude
   (`prev_newton_step_norm < tol * 1e3`) — this distinguishes "at the MLE"
   from "step-halving has been killing our steps." Both dense and sparse
-  kernels now share the patched criterion. Fixes Paper 3 Step 4 n=100
-  silently converging at iter 7 with interaction params essentially at zero.
+  kernels now share the patched criterion. Fixes a production case that
+  silently converged at iter 7 with interaction params essentially at zero.
 
 ## Performance
 

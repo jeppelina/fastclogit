@@ -32,13 +32,14 @@ to have been compiled (automatic in the installed package; via
 
 \item{choice}{Integer or logical vector (n). 1/TRUE for chosen alternative.}
 
-\item{strata}{Vector (n). Group/choice-set identifier (e.g., CoupleId).}
+\item{strata}{Vector (n). Group/choice-set identifier.}
 
 \item{offset}{Numeric vector (n) or NULL. McFadden/Manski correction.
 Enters the linear predictor as a fixed shift: eta = X*beta + offset.}
 
 \item{cluster}{Vector or NULL. Cluster identifier for sandwich SEs
-(e.g., LopNrEgo). If NULL, only model-based SEs are computed.}
+(e.g. a person id when each person contributes several choice sets).
+If NULL, only model-based SEs are computed.}
 
 \item{max_iter}{Integer. Maximum Newton-Raphson iterations.}
 

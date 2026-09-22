@@ -48,7 +48,7 @@ The point is to avoid ever materialising the dense matrix:
 library(Matrix)
 
 X <- sparse.model.matrix(
-  ~ pair_type * decade + edu * decade + age_diff * decade + lnDist,
+  ~ pair_type * decade + edu * decade + age_diff * decade + x1,
   data = d
 )[, -1, drop = FALSE]          # drop the intercept, not the reference levels
 
@@ -89,9 +89,9 @@ Two failure modes that only bite on large factor-heavy designs.
 **Stratum-constant columns.** A covariate constant within every choice set
 cancels in the conditional likelihood. `survival::clogit` returns `NA`;
 this package returns a ridge-determined value with a meaningless SE, and
-`$vcov_singular` does not flag it. In a one-sided partner-choice model this is
-every ego-side main effect. Interact them with an alter-side covariate, or drop
-them.
+`$vcov_singular` does not flag it. In a one-sided choice model this is every
+chooser-level main effect. Interact them with an alternative-level covariate,
+or drop them.
 
 **Rare cells.** A dummy with a handful of non-zeros in tens of millions of rows
 is estimable but fragile. Until v0.5.0 the collinearity screen could delete such
@@ -100,7 +100,7 @@ fell outside it looked like a zero column. At 200,000 rows a dummy with four
 1s was dropped in 40% of runs. The screen now forces low-support columns into
 the subsample. Still: check `fit$dropped_terms` on every production fit.
 
-## Restricted servers (MONA and similar)
+## Restricted and offline servers
 
 Where R packages cannot be installed, use the source-able bundle in `mona/`:
 
@@ -109,10 +109,10 @@ source("load_fastclogit.R")
 ```
 
 That compiles the four `.cpp` kernels with `Rcpp::sourceCpp()` and sources the
-R files. The MONA copies inline the CSR helper rather than `#include`-ing a
-header, because R's `make` pipeline treats the `$` in UNC paths such as
-`//micro.intra/projekt/P0515$/` as a make-variable reference and expands it to
-nothing, so a header on the include path is silently unreachable.
+R files. The bundled copies inline the CSR helper rather than `#include`-ing a header,
+because R's `make` pipeline treats a `$` in a UNC path (such as
+`//server/share/PROJECT$/`) as a make-variable reference and expands it to
+nothing, so a header on the include path becomes silently unreachable.
 
 The loader resolves its own directory by checking candidates until one
 demonstrably holds `clogit_newton.cpp`, rather than trusting

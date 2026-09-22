@@ -23,9 +23,9 @@
 #' @param data A data.frame or data.table containing the variables in the
 #'   formula plus the strata, cluster, and offset columns.
 #' @param strata Character string naming the column in \code{data} that
-#'   identifies choice sets (e.g., \code{"CoupleId"}).
+#'   identifies choice sets (e.g., \code{"choice_set_id"}).
 #' @param cluster Optional character string naming the column for clustered
-#'   sandwich standard errors (e.g., \code{"LopNrEgo"}). If \code{NULL},
+#'   sandwich standard errors (e.g., \code{"person_id"}). If \code{NULL},
 #'   only model-based SEs are computed.
 #' @param offset Optional character string naming the column for a fixed offset
 #'   in the linear predictor (e.g., McFadden/Manski sampling correction). If
@@ -59,12 +59,12 @@
 #' d <- sim$data
 #'
 #' # Fit using formula interface
-#' fit <- fclogit(choice ~ lnDist + n_years_same_cfar + n_years_same_peorg,
+#' fit <- fclogit(choice ~ x1 + x2 + x3,
 #'                data = d, strata = "strata_id", cluster = "cluster_id")
 #' summary(fit)
 #'
 #' # With offset (McFadden/Manski correction)
-#' fit2 <- fclogit(choice ~ lnDist + n_years_same_cfar,
+#' fit2 <- fclogit(choice ~ x1 + x2,
 #'                 data = d, strata = "strata_id",
 #'                 cluster = "cluster_id", offset = "correction")
 #' summary(fit2)
@@ -72,17 +72,17 @@
 #' # With factor predictors (automatic dummy coding)
 #' d$edu <- factor(sample(c("Low", "Mid", "High"), nrow(d), replace = TRUE),
 #'                 levels = c("Low", "Mid", "High"))
-#' fit3 <- fclogit(choice ~ lnDist + edu, data = d, strata = "strata_id")
+#' fit3 <- fclogit(choice ~ x1 + edu, data = d, strata = "strata_id")
 #' summary(fit3)
 #'
 #' # For very large factor-heavy designs, bypass fclogit and build X sparse:
 #' \dontrun{
 #' library(Matrix)
 #' X_sparse <- sparse.model.matrix(
-#'   ~ pair_gen_meso * decade + age * decade + edu * decade,
+#'   ~ group * decade + age * decade + edu * decade,
 #'   data = dt)[, -1, drop = FALSE]   # drop intercept
 #' fit <- fastclogit(X_sparse, choice = dt$y,
-#'                   strata = dt$CoupleId, cluster = dt$LopNrEgo)
+#'                   strata = dt$choice_set_id, cluster = dt$person_id)
 #' }
 #'
 #' @export

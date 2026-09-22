@@ -6,8 +6,8 @@ for factor-heavy designs, McFadden/Manski sampling-correction offsets,
 cluster-robust standard errors, and a Newton optimiser that tells you **how** it
 converged rather than just whether it did.
 
-Written for Swedish register data on partner choice: tens of millions of rows,
-hundreds of thousands of choice sets, designs that are mostly factor dummies.
+Built for problems with tens of millions of rows, hundreds of thousands of
+choice sets, and designs that are mostly factor dummies.
 
 ## When to use it, and when not to
 
@@ -19,8 +19,8 @@ anything else.
 **Use `fastclogit`** when `clogit()` runs out of memory or time. The gain comes
 from never materialising `model.frame`/`model.matrix` copies, and from a sparse
 path that exploits factor-heavy designs. At 1M rows and 90 columns it is 35x
-faster than the dense path and uses a fifth of the memory; at production scale
-in Paper 3 the difference was 95 minutes versus 80 seconds, and 225 GB versus
+faster than the dense path and uses a fifth of the memory; on one production
+workload the difference was 95 minutes versus 80 seconds, and 225 GB versus
 30 GB.
 
 **Do not use either** for two-sided matching questions without knowing what a
@@ -33,8 +33,8 @@ matter, not a software one.
 remotes::install_github("jeppelina/fastclogit")
 ```
 
-Requires a working Rcpp toolchain. On restricted servers where packages cannot
-be installed (SCB's MONA, for instance), use the source-able bundle in `mona/`:
+Requires a working Rcpp toolchain. On restricted or offline servers where
+packages cannot be installed, use the source-able bundle in `mona/`:
 copy the folder across and `source("load_fastclogit.R")`. See
 `mona/README_MONA.md`, and note that `mona/` is generated from `src/` by
 `tools/make_mona_bundle.R` — edit `src/`, not `mona/`.
@@ -47,7 +47,7 @@ library(fastclogit)
 sim <- simulate_clogit_data(n_egos = 5000, n_alts = 30)
 
 fit <- fclogit(
-  choice ~ lnDist + n_years_same_cfar + Edudiff3,
+  choice ~ x1 + x2 + f1,
   data    = sim$data,
   strata  = "strata_id",
   cluster = "cluster_id",     # cluster-robust SEs
@@ -103,16 +103,15 @@ wrong instrument for this). Reproduce with
 All three engines reach the same log-likelihood to a relative spread of exactly
 zero.
 
-Production figures from Paper 3, quoted separately because you cannot reproduce
-them from this repo: 37M rows by 128 columns at ~5% density, ~225 GB to ~30 GB
-peak memory, ~95 minutes to ~80 seconds.
+Figures from a production deployment, quoted separately because you cannot
+reproduce them from this repo: 37M rows by 128 columns at ~5% density, ~225 GB
+to ~30 GB peak memory, ~95 minutes to ~80 seconds.
 
 ## Validation
 
 `inst/validation/` holds simulation studies with pre-specified decision rules,
 covering parameter recovery, SE calibration, interval coverage, the sampling
-correction, cluster-robust inference, the KHB decomposition and nine assumption
-violations. 35 of 36 checks pass; the one failure is a documented open finding.
+correction, cluster-robust inference and nine assumption violations. 35 of 36 checks pass; the one failure is a documented open finding.
 `inst/validation/README.md` reports the numbers, what the studies found, and —
 importantly — two simulation designs that were wrong and one hypothesis they
 refuted.
@@ -120,8 +119,8 @@ refuted.
 ## Limitations
 
 **Stratum-constant covariates are not identified, and we do not tell you.** A
-covariate constant within every choice set but varying across them (an ego-side
-covariate in a one-sided choice model) drops out of the conditional likelihood.
+covariate constant within every choice set but varying across them (a
+chooser-level covariate) drops out of the conditional likelihood.
 `survival::clogit` returns `NA` for such terms. This package returns a
 ridge-determined value with a meaningless standard error, and `$vcov_singular`
 does **not** flag it, because the ridge rescues the matrix inversion before the
@@ -132,7 +131,7 @@ flag can fire. Drop such columns yourself.
 The warning now says so. Relax `tol`.
 
 **The dense path has an unexplained divergence at large choice-set sizes.** On
-real data at 100 alternatives per set, Paper 3 observed the dense kernel
+real data at 100 alternatives per set, the dense kernel has been observed
 converging to a log-likelihood 271 units below both the sparse kernel and
 `survival`. It has never been reproduced in simulation. Prefer the sparse path
 at production scale.
@@ -147,7 +146,7 @@ clusters raises a warning rather than being accepted silently.
 - `vignette("convergence-and-diagnostics")` — reading `$iter_log`, and what each
   convergence route means
 - `vignette("large-scale")` — sparse designs, memory, and restricted servers
-- `?fastclogit`, `?fclogit`, `?khb_decompose` — full options reference
+- `?fastclogit`, `?fclogit` — full options reference
 - `NEWS.md` — what changed and why
 
 ## License

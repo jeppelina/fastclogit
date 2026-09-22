@@ -42,7 +42,7 @@ source("load_fastclogit.R")
 
 # 2. Fit a model using the formula interface
 fit <- fclogit(
-  actualpartner ~ AgeDiffcat + EduPairing + lnDist + n_years_same_cfar,
+  actualpartner ~ f2 + EduPairing + x1 + x2,
   data    = my_data,
   strata  = "CoupleId",
   cluster = "LopNrEgo",
@@ -62,21 +62,21 @@ confint(fit)
 
 ```r
 # Basic model
-fit <- fclogit(actualpartner ~ AgeDiffcat + SameMicroAnc + lnDist,
+fit <- fclogit(actualpartner ~ f2 + SameMicroAnc + x1,
                data = dt, strata = "CoupleId")
 
 # With clustered robust SEs
-fit <- fclogit(actualpartner ~ AgeDiffcat + SameMicroAnc + lnDist,
+fit <- fclogit(actualpartner ~ f2 + SameMicroAnc + x1,
                data = dt, strata = "CoupleId", cluster = "LopNrEgo")
 
 # With McFadden/Manski offset
-fit <- fclogit(actualpartner ~ AgeDiffcat + SameMicroAnc + lnDist,
+fit <- fclogit(actualpartner ~ f2 + SameMicroAnc + x1,
                data = dt, strata = "CoupleId", cluster = "LopNrEgo",
                offset = "correction")
 
 # With interactions
-fit <- fclogit(actualpartner ~ n_years_same_cfar + ln_mean_cfar_size_c +
-                 n_years_same_cfar:ln_mean_cfar_size_c,
+fit <- fclogit(actualpartner ~ x2 + ln_mean_cfar_size_c +
+                 x2:ln_mean_cfar_size_c,
                data = dt, strata = "CoupleId", cluster = "LopNrEgo")
 ```
 
@@ -110,8 +110,8 @@ library(Matrix)
 # Build X sparse directly from the formula — never materialises a dense
 # matrix at any point. This is the key memory win at MONA scale.
 X_sparse <- Matrix::sparse.model.matrix(
-  ~ pair_gen_meso * decade + AgeDiffcat * decade + Edudiff * decade +
-    lnDist * decade,
+  ~ pair_gen_meso * decade + f2 * decade + Edudiff * decade +
+    x1 * decade,
   data = dt
 )[, -1, drop = FALSE]   # drop the intercept
 
@@ -164,8 +164,8 @@ source("khb_decompose.R")  # if not already loaded by load_fastclogit.R
 result <- khb_decompose(
   data     = dt,
   key_vars = c("EduPairing"),
-  z_vars   = c("n_years_same_cfar", "n_years_same_peorg", "lnDist"),
-  controls = c("AgeDiffcat", "SameMicroAnc"),
+  z_vars   = c("x2", "x3", "x1"),
+  controls = c("f2", "SameMicroAnc"),
   strata   = "CoupleId",
   cluster  = "LopNrEgo",
   choice   = "actualpartner",

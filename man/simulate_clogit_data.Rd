@@ -2,16 +2,14 @@
 % Please edit documentation in R/simulate_clogit.R
 \name{simulate_clogit_data}
 \alias{simulate_clogit_data}
-\title{Simulate Conditional Logit Data (Partner Choice DGP)}
+\title{Simulate Conditional Logit Data}
 \usage{
 simulate_clogit_data(
   n_egos = 5000L,
   n_alts = 100L,
-  beta_continuous = c(lnDist = -0.5, n_years_same_cfar = 1, n_years_same_peorg = 0.8,
-    n_years_same_uni = 0.6),
-  beta_factor = list(Edudiff3 = c(Edudiff3_BothHigh = 0.8, Edudiff3_BothLow = 0.4,
-    Edudiff3_Missing = -0.3), AgeDiffcat = c(AgeDiffcat_2 = -0.2, AgeDiffcat_3 = -0.5,
-    AgeDiffcat_4 = -0.8, AgeDiffcat_5 = -1.2)),
+  beta_continuous = c(x1 = -0.5, x2 = 1, x3 = 0.8, x4 = 0.6),
+  beta_factor = list(f1 = c(f1_b = 0.8, f1_c = 0.4, f1_d = -0.3), f2 = c(f2_b = -0.2,
+    f2_c = -0.5, f2_d = -0.8, f2_e = -1.2)),
   use_offset = TRUE,
   strata_props = c(0.05, 0.1, 0.1, 0.6, 0.15),
   strata_popsizes = c(20, 100, 50, 5000, 50000),
@@ -20,29 +18,30 @@ simulate_clogit_data(
 )
 }
 \arguments{
-\item{n_egos}{Integer. Number of choice sets (egos).}
+\item{n_egos}{Integer. Number of choice sets.}
 
 \item{n_alts}{Integer. Alternatives per choice set (including chosen).}
 
 \item{beta_continuous}{Numeric vector. True coefficients for continuous
 predictors. Length determines number of continuous predictors.
-Default mimics: lnDist(-0.5), n_years_same_cfar(1.0),
-n_years_same_peorg(0.8), n_years_same_uni(0.6).}
+Defaults: x1 = -0.5, x2 = 1.0, x3 = 0.8, x4 = 0.6.}
 
 \item{beta_factor}{List of numeric vectors. True coefficients for factor
 dummy variables (excluding reference level). Names become factor names.
-Default mimics Edudiff3 (4 levels, ref=1) and AgeDiffcat (5 levels, ref=1).}
+Defaults: f1 (4 levels, reference = 1) and f2 (5 levels, reference = 1).}
 
 \item{use_offset}{Logical. Simulate McFadden/Manski stratified sampling?}
 
-\item{strata_props}{Numeric vector of length 5. Sampling proportions per
-stratum (Cfar/PeOrg/Uni/County/Rest). Default: c(5, 10, 10, 60, 15)/100.}
+\item{strata_props}{Numeric vector of length 5. Sampling proportion for
+each of the five sampling strata. Default: c(5, 10, 10, 60, 15)/100, i.e.
+four narrow strata plus a large residual one.}
 
 \item{strata_popsizes}{Numeric vector of length 5. Typical population sizes
 per stratum for offset computation.}
 
-\item{cluster_ratio}{Numeric > 0. Ratio of egos to unique cluster IDs.
-1.0 = each ego is unique; 1.5 = some egos appear ~1.5 times on average.}
+\item{cluster_ratio}{Numeric > 0. Ratio of choice sets to unique cluster
+IDs. 1.0 = every choice set is its own cluster; 1.5 = clusters contribute
+about 1.5 choice sets on average.}
 
 \item{seed}{Integer. Random seed.}
 }
@@ -59,9 +58,15 @@ A list with components:
   \item{n_alts}{Alternatives per set}
 }
 \description{
-Generates synthetic data mimicking the LISA partner choice pipeline:
-stratified importance sampling with McFadden/Manski offsets,
-factor and continuous predictors, and clustered egos.
+Generates synthetic data with the structure of a large sampled-alternatives
+choice problem: stratified importance sampling with McFadden/Manski
+offsets, a mix of continuous and factor predictors, and choosers who may
+contribute several choice sets (clusters).
+}
+\details{
+Variable names are deliberately generic (`x1`-`x4`, `f1`, `f2`). Supply your
+own `beta_continuous` / `beta_factor` to change the names, the coefficients
+or the number of predictors.
 }
 \examples{
 sim <- simulate_clogit_data(n_egos = 500, n_alts = 50)

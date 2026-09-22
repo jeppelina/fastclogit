@@ -121,7 +121,7 @@ The kernel comments record a floor of ~0.003 at 75M+ rows, three orders of
 magnitude beyond anything reproducible on one machine. No exponent is fitted to
 four non-monotone points here.
 
-**Resolved elsewhere, 2026-09-22.** Paper 4 measured the floor directly on one
+**Resolved by production measurement, 2026-09-22.** The floor was measured directly on one production
 specification over nested subsamples: 8.3e-05 at 844,031 rows, 1.7e-03 at
 8,440,878, and 2.0e-02 at 84,407,382. Divided by |loglik| those are flat at
 1.7e-09, 3.5e-09 and 4.2e-09 -- the textbook result that a function computed to
@@ -149,9 +149,9 @@ The second forced the chosen alternative in *on top of* `n_s` draws per
 stratum, which is a different sampling protocol from the one `-log(n_s/N_s)` is
 derived for. Only when the chosen alternative occupies one of its stratum's
 `n_s` slots does the familiar formula apply. Both errors were in the
-simulation, not the package — but Paper 1 and Paper 4 each carry a patch script
-for exactly this bookkeeping, which is some evidence about how easy it is to
-get wrong.
+simulation, not the package — but production pipelines carry dedicated patch
+scripts for exactly this bookkeeping, which is some evidence about how easy it
+is to get wrong.
 
 **Two natural-looking clustering designs induce no dependence at all.** A
 random intercept shared within a choice set cancels exactly in the conditional
@@ -165,12 +165,11 @@ duplication, where the truth is analytic.
 
 ## Deferred
 
-- **The dense/sparse divergence at n=100.** Paper 3 observed the dense kernel
+- **The dense/sparse divergence at n=100.** The dense kernel has been observed
   converging to a log-likelihood 271 units below sparse and survival on real
-  meso13 data. Local reproduction failed at every scale in June, and the
-  line-search fix was never tested against it because the kernel-fix check
-  fits sparse only. Nothing runnable on one machine can settle this; it needs a
-  MONA run on real data. `tests/testthat/test-dense-sparse-consistency.R`
+  data. Local reproduction failed at every scale, and the line-search fix was
+  never tested against it. Nothing runnable on one machine can settle this; it
+  needs a run on the real data. `tests/testthat/test-dense-sparse-consistency.R`
   guards agreement live in the meantime.
 - **A full convergence-route audit.** Verifying that a plateau-converged fit is
   genuinely at the maximum requires an *independently coded* optimiser as

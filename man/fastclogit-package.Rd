@@ -5,7 +5,7 @@
 \alias{fastclogit-package}
 \title{fastclogit: Fast Conditional Logit for Large-Scale Choice Data}
 \description{
-Memory-efficient conditional logit estimation using Rcpp, designed for large-scale discrete choice models with millions to hundreds of millions of rows. Features include a formula interface with automatic factor expansion, a sparse-X execution path for factor-heavy designs that cuts peak memory by up to 8x, McFadden/Manski sampling correction offsets, clustered sandwich standard errors, collinearity detection, and KHB mediation decomposition (Kohler, Karlson & Holm, 2011). The Newton-Raphson optimizer reports its convergence route explicitly (gradient norm, a combined relative-log-likelihood and unhalved-Newton-step criterion, and a guarded log-likelihood plateau rule) and returns a full per-iteration trace. Avoids the model.frame/model.matrix memory duplication that makes survival::clogit() infeasible on large datasets.
+Memory-efficient conditional logit estimation using Rcpp, designed for large-scale discrete choice models with millions to hundreds of millions of rows. Features include a formula interface with automatic factor expansion, a sparse-X execution path for factor-heavy designs that cuts peak memory by up to 8x, McFadden/Manski sampling correction offsets, clustered sandwich standard errors, and collinearity detection. The Newton-Raphson optimizer reports its convergence route explicitly (gradient norm, a combined relative-log-likelihood and unhalved-Newton-step criterion, and a guarded log-likelihood plateau rule) and returns a full per-iteration trace. Avoids the model.frame/model.matrix memory duplication that makes survival::clogit() infeasible on large datasets.
 }
 \seealso{
 Useful links:

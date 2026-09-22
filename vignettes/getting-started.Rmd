@@ -28,7 +28,7 @@ less memory.
 ## Simulating data
 
 The package includes a data generator that creates synthetic discrete choice
-data with the structure commonly used in partner choice research:
+data with a structure typical of large discrete-choice problems:
 
 ```{r simulate}
 sim <- simulate_clogit_data(
@@ -51,7 +51,7 @@ McFadden/Manski offset that adjusts for stratified sampling.
 
 ```{r fclogit}
 fit <- fclogit(
-  choice ~ lnDist + n_years_same_cfar + n_years_same_peorg + n_years_same_uni,
+  choice ~ x1 + x2 + x3 + x4,
   data    = sim$data,
   strata  = "strata_id",
   cluster = "cluster_id",
@@ -103,28 +103,25 @@ fit_sp <- fastclogit(
 max(abs(coef(fit_sp) - coef(fit2)))
 ```
 
-For very large factor models — for example, an interactions-heavy Paper-3
-style design at 1M+ rows with 90+ columns at ~5% density — build the
-sparse design matrix directly from a formula via
-`Matrix::sparse.model.matrix()` so the dense version is never built:
+For very large factor models — an interactions-heavy design at 1M+ rows with
+90+ columns at ~5% density, say — build the sparse design matrix directly from
+a formula via `Matrix::sparse.model.matrix()` so the dense version is never
+built:
 
 ```{r sparse-formula, eval = FALSE}
 library(Matrix)
 X_sparse <- sparse.model.matrix(
-  ~ pair_gen_meso * decade + age * decade + edu * decade + lnDist * decade,
+  ~ group * decade + age * decade + edu * decade + dist * decade,
   data = dt)[, -1, drop = FALSE]   # drop the intercept
 
 fit <- fastclogit(X_sparse,
-                  choice  = dt$actualpartner,
-                  strata  = dt$CoupleId,
-                  cluster = dt$LopNrEgo)
+                  choice  = dt$chosen,
+                  strata  = dt$choice_set_id,
+                  cluster = dt$person_id)
 ```
 
-In production benchmarks at 50,000 strata × 30 alters × 92 cols (~5%
-density), the sparse path is 20× faster than the dense path (1.4 s vs
-27.5 s) and uses 15% less memory. The gap widens with problem size:
-at the Paper-3 Step 4 target scale, the sparse path takes the fit from
-~95 minutes / ~225 GB to ~80 seconds / ~30 GB.
+See `vignette("large-scale")` for measured timings and memory across a range
+of problem sizes, and for how to size a job before you queue it.
 
 ## Checking how the fit converged
 
@@ -155,51 +152,12 @@ By default, `summary()`, `confint()`, and `tidy_fastclogit()` use clustered
 robust standard errors when available. Pass `robust = FALSE` to use
 model-based SEs instead.
 
-## KHB mediation decomposition
+## Also included
 
-The KHB method (Kohler, Karlson & Holm 2011) decomposes total effects into
-direct and indirect (mediated) effects in nonlinear models. This is useful
-when you want to know how much of variable X's effect operates through
-mediator Z.
-
-```{r khb}
-# Create data with a known mediation structure
-set.seed(123)
-n_egos <- 500; n_alts <- 30; n <- n_egos * n_alts
-
-d <- data.frame(
-  strata_id = rep(1:n_egos, each = n_alts),
-  x = rnorm(n),
-  c1 = rnorm(n)
-)
-d$z <- 0.6 * d$x + rnorm(n)  # z is mediated by x (gamma = 0.6)
-eta <- 0.5 * d$x + 0.8 * d$z + 0.3 * d$c1
-
-# Generate choices
-d$choice <- 0L
-for (i in 1:n_egos) {
-  rows <- ((i-1)*n_alts + 1):(i*n_alts)
-  probs <- exp(eta[rows] - max(eta[rows]))
-  probs <- probs / sum(probs)
-  d$choice[rows[sample(n_alts, 1, prob = probs)]] <- 1L
-}
-
-result <- khb_decompose(
-  data     = d,
-  key_vars = "x",
-  z_vars   = "z",
-  controls = "c1",
-  strata   = "strata_id",
-  choice   = "choice",
-  verbose  = FALSE
-)
-
-result$decomposition
-```
-
-The indirect effect captures the portion of x's effect that operates through
-z. The confounding percentage tells you what fraction of x's total effect is
-mediated.
+`khb_decompose()` implements the Kohler, Karlson & Holm (2011) decomposition of
+total effects into direct and indirect parts for nested nonlinear models, built
+on `fclogit()`. It is a specialised tool rather than part of the core workflow;
+see `?khb_decompose` for a worked example.
 
 ## Comparison with survival::clogit
 
@@ -219,9 +177,9 @@ d <- sim_small$data
 d$strata_id <- factor(d$strata_id)
 d$cluster_id <- factor(d$cluster_id)
 fit_clogit <- clogit(
-  choice ~ lnDist + n_years_same_cfar + n_years_same_peorg + n_years_same_uni +
-    Edudiff3_BothHigh + Edudiff3_BothLow + Edudiff3_Missing +
-    AgeDiffcat_2 + AgeDiffcat_3 + AgeDiffcat_4 + AgeDiffcat_5 +
+  choice ~ x1 + x2 + x3 + x4 +
+    f1_b + f1_c + f1_d +
+    f2_b + f2_c + f2_d + f2_e +
     offset(correction) + strata(strata_id) + cluster(cluster_id),
   data = d,
   # clogit() defaults to method = "exact", which it refuses to combine with a

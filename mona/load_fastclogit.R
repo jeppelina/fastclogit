@@ -175,7 +175,7 @@ tryCatch({
 
   # Also test formula interface if available
   if (exists("fclogit")) {
-    test_fit2 <- fclogit(choice ~ lnDist + n_years_same_cfar,
+    test_fit2 <- fclogit(choice ~ x1 + x2,
                          data = test_sim$data, strata = "strata_id")
     stopifnot(test_fit2$converged)
     cat("PASS (matrix + formula, ", length(test_fit$coefficients), " coefs, loglik = ",

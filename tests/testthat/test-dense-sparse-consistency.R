@@ -88,9 +88,9 @@ test_that("dense and sparse agree on clustered sandwich SEs", {
 test_that("the formula path and the matrix path give the same fit", {
   set.seed(8)
   sim <- simulate_clogit_data(n_egos = 400, n_alts = 15, seed = 8)
-  fm <- fclogit(choice ~ lnDist + n_years_same_cfar + n_years_same_peorg,
+  fm <- fclogit(choice ~ x1 + x2 + x3,
                 data = sim$data, strata = "strata_id")
-  cols <- c("lnDist", "n_years_same_cfar", "n_years_same_peorg")
+  cols <- c("x1", "x2", "x3")
   fx <- fastclogit(as.matrix(sim$data[, cols]), sim$data$choice,
                    sim$data$strata_id)
   expect_equal(unname(coef(fm)[cols]), unname(coef(fx)[cols]), tolerance = 1e-10)
