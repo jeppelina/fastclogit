@@ -1,5 +1,5 @@
 # =============================================================================
-# 02_design_matrix.R — the interface studies.
+# 02_design_matrix.R: the interface studies.
 #
 # Two things nobody has looked at since they were written, and which produce a
 # fit that converges beautifully to the WRONG answer when they are wrong.

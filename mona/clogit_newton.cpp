@@ -1,7 +1,7 @@
-// GENERATED FROM src/clogit_newton.cpp by tools/make_mona_bundle.R — DO NOT EDIT.
+// GENERATED FROM src/clogit_newton.cpp by tools/make_mona_bundle.R, DO NOT EDIT.
 // Edit the src/ copy and re-run the generator.
 
-// clogit_newton.cpp — Newton-Raphson conditional logit with offset support
+// clogit_newton.cpp: Newton-Raphson conditional logit with offset support
 //
 // Memory-efficient: works on pre-built design matrix, no copies.
 // Each group's contribution to gradient/Hessian is accumulated in-place.
@@ -114,7 +114,7 @@ Rcpp::List clogit_fit_cpp(
     bool converged = false;
     int convergence_code = 4;  // default = iter_max
 
-    // Best-loglik beta tracking — returned as $coefficients and used for the
+    // Best-loglik beta tracking, returned as $coefficients and used for the
     // final Hessian recomputation.
     arma::vec best_beta = beta;
     double    best_loglik = -std::numeric_limits<double>::infinity();
@@ -122,6 +122,13 @@ Rcpp::List clogit_fit_cpp(
 
     // Tier-3 state
     int    plateau_count        = 0;
+    // Flatness and the last gradient, tracked WITHOUT the plateau rule's
+    // side-conditions, so that a fit which simply ran out of iterations
+    // chasing an unreachable tol can still be recognised at the end of the
+    // loop. See the terminal check after the loop.
+    int    flat_count           = 0;
+    double last_grad_max        = std::numeric_limits<double>::infinity();
+    double last_loglik_abs      = 0.0;
     int    prev_halving_count   = 0;
     double prev_step_size       = 1.0;
     double prev_newton_step_norm = std::numeric_limits<double>::infinity();
@@ -170,7 +177,7 @@ Rcpp::List clogit_fit_cpp(
             }
 
             if (c_idx < 0) {
-                Rcpp::warning("Group %d has no chosen alternative — skipping", j + 1);
+                Rcpp::warning("Group %d has no chosen alternative, skipping", j + 1);
                 continue;
             }
 
@@ -201,15 +208,24 @@ Rcpp::List clogit_fit_cpp(
             best_loglik_iter = iter + 1;
         }
 
+        // Flatness bookkeeping, deliberately free of the plateau rule's
+        // "optimiser is struggling" evidence: a cleanly converged fit never
+        // produces halvings, so that evidence can never appear for exactly
+        // the fits this is meant to catch.
+        if (iter > 0 && rel_ll_change < tier3_plateau_tol) flat_count++;
+        else if (iter > 0) flat_count = 0;
+        last_grad_max   = grad_max;
+        last_loglik_abs = std::fabs(loglik_new);
+
         int tier_fired = 0;
 
-        // PRIMARY — strict gradient test
+        // PRIMARY, strict gradient test
         if (grad_max < tol) {
             tier_fired = 1;
             convergence_code = 1;
             converged = true;
         }
-        // SECONDARY — rel_ll AND grad AND step all tight (synced with sparse)
+        // SECONDARY, rel_ll AND grad AND step all tight (synced with sparse)
         else if (iter > 0 &&
                  rel_ll_change          < tol * 0.01 &&
                  grad_max               < tol * 10.0 &&
@@ -222,7 +238,7 @@ Rcpp::List clogit_fit_cpp(
                         rel_ll_change, grad_max, prev_newton_step_norm);
             }
         }
-        // PLATEAU — survival-style loglik plateau with side conditions
+        // PLATEAU, survival-style loglik plateau with side conditions
         else if (iter > 0 && tier3_enable &&
                  rel_ll_change < tier3_plateau_tol &&
                  grad_max      < std::max(tier3_grad_floor,
@@ -289,7 +305,7 @@ Rcpp::List clogit_fit_cpp(
             break;
         }
 
-        // Record UNHALVED Newton step magnitude — used by NEXT iter's
+        // Record UNHALVED Newton step magnitude, used by NEXT iter's
         // secondary convergence check.
         prev_newton_step_norm = arma::abs(delta).max();
 
@@ -413,8 +429,37 @@ Rcpp::List clogit_fit_cpp(
     }
 
     // If we exited via iter_max (loop counter reached max_iter), record code 4.
+    // TERMINAL CHECK. Running out of iterations is not the same as failing.
+    //
+    // `tol` applies to max|gradient|, and how small that can be COMPUTED to be
+    // depends on the problem: the gradient is a sum over strata, so asking for
+    // 1e-14 on a large fit asks for a precision the arithmetic does not have.
+    // The optimiser then keeps stepping long after it has arrived and reports
+    // iter_max. Measured: at 10,000 strata with tol = 1e-14 a fit ran all 200
+    // iterations and finished at max|grad| = 3.8e-13, reported NOT CONVERGED.
+    //
+    // The in-loop plateau rule cannot rescue this, because it requires
+    // evidence that the optimiser is struggling (halvings, or a tiny step) and
+    // a cleanly converged fit never produces any.
+    //
+    // So: if the log-likelihood was flat for the required number of iterations
+    // and the gradient is below the same ceiling the plateau rule uses, this is
+    // a flat optimum, not a failure. Everything else remains iter_max.
     if (!converged) {
-        convergence_code = 4;
+        const double term_floor = std::max(tier3_grad_floor,
+                                           GRAD_REL_TOL * last_loglik_abs);
+        if (tier3_enable && flat_count >= tier3_plateau_iters &&
+            last_grad_max < term_floor) {
+            converged        = true;
+            convergence_code = 6;
+            if (verbose) {
+                Rprintf("  Reached max_iter, but the log-likelihood was flat for %d "
+                        "iterations\n  and max|grad| = %.2e is below the floor (%.2e). "
+                        "At a flat optimum.\n", flat_count, last_grad_max, term_floor);
+            }
+        } else {
+            convergence_code = 4;
+        }
     }
 
     // Recompute Hessian (and grad, loglik) at best_beta for variance estimation.

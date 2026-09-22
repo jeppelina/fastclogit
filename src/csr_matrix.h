@@ -1,4 +1,4 @@
-// csr_matrix.h — Row-major (CSR) view of an arma::sp_mat (CSC), shared by
+// csr_matrix.h: Row-major (CSR) view of an arma::sp_mat (CSC), shared by
 // the sparse Newton kernel and the sparse cluster-sandwich. Build O(nnz).
 //
 // Used by clogit_newton_sparse.cpp + clogit_sandwich_sparse.cpp. Keep this
@@ -41,7 +41,7 @@ struct CsrMatrix {
         n_cols = static_cast<int>(X.n_cols);
 
         // Pass 1: count nnz per row by column-walking (faster than the
-        // general iterator — cache-friendly CSC traversal).
+        // general iterator, cache-friendly CSC traversal).
         std::vector<int> row_nnz(n_rows, 0);
         for (int j = 0; j < n_cols; ++j) {
             for (arma::sp_mat::const_col_iterator it = X.begin_col(j);

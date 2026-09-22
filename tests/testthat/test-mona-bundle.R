@@ -1,4 +1,4 @@
-# test-mona-bundle.R — mona/ must be exactly what tools/make_mona_bundle.R
+# test-mona-bundle.R: mona/ must be exactly what tools/make_mona_bundle.R
 # produces from src/ and R/.
 #
 # WHY. src/ and mona/ are two copies of the same kernels, differing only in

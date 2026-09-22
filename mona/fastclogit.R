@@ -1,3 +1,58 @@
+#' Which columns are constant within every stratum?
+#'
+#' A covariate that never varies inside a choice set cancels in the conditional
+#' likelihood, so it carries no information about its coefficient and is not
+#' identified. survival::clogit returns NA for such terms. This package used to
+#' fit them anyway, producing a ridge-determined value with a meaningless
+#' standard error and no warning at all.
+#'
+#' Checked with early exit: the moment any stratum shows variation the column
+#' is cleared, so for a well-specified model this costs one stratum per column
+#' and is effectively free. It is only expensive for columns that really are
+#' stratum-constant, which is exactly when you want to know.
+#'
+#' @keywords internal
+#' @noRd
+.stratum_constant_cols <- function(X, group_start, group_size, is_sparse) {
+  p <- ncol(X)
+  G <- length(group_start)
+  out <- logical(p)
+
+  if (is_sparse) {
+    Xp <- X@p; Xi <- X@i; Xx <- X@x
+    for (j in seq_len(p)) {
+      lo <- Xp[j] + 1L; hi <- Xp[j + 1L]
+      if (hi < lo) { out[j] <- FALSE; next }  # all-zero: the variance screen owns it
+      rows <- Xi[lo:hi]                       # 0-based, ascending within a column
+      vals <- Xx[lo:hi]
+      g <- findInterval(rows, group_start)    # 1-based group index
+      const <- TRUE
+      # Only groups touched by a non-zero can fail; untouched groups are
+      # entirely zero and therefore constant.
+      for (gg in unique(g)) {
+        sel <- which(g == gg)
+        if (length(sel) != group_size[gg]) { const <- FALSE; break }
+        v <- vals[sel]
+        if (any(v != v[1L]))                 { const <- FALSE; break }
+      }
+      out[j] <- const
+    }
+  } else {
+    for (j in seq_len(p)) {
+      const <- TRUE
+      for (g in seq_len(G)) {
+        k <- group_size[g]
+        if (k < 2L) next
+        st <- group_start[g] + 1L
+        v <- X[st:(st + k - 1L), j]
+        if (any(v != v[1L])) { const <- FALSE; break }
+      }
+      out[j] <- const
+    }
+  }
+  out
+}
+
 #' Fast Conditional Logit Estimation
 #'
 #' Memory-efficient conditional logit via Rcpp Newton-Raphson. Supports
@@ -9,7 +64,7 @@
 #'
 #' @param X Design matrix (n x p). Either a numeric `matrix` (dense path)
 #'   or any `Matrix::sparseMatrix` (sparse path; coerced to `dgCMatrix`).
-#'   All predictors must be pre-expanded — factors already dummy-coded.
+#'   All predictors must be pre-expanded, factors already dummy-coded.
 #'   No intercept (not identified in conditional logit). The sparse path
 #'   requires `clogit_newton_sparse.cpp` / `clogit_sandwich_sparse.cpp`
 #'   to have been compiled (automatic in the installed package; via
@@ -79,7 +134,7 @@
 #'
 #' @return An object of class "fastclogit" with components:
 #'   \item{coefficients}{Named vector of estimated coefficients (best-loglik
-#'     beta across iterations — survival::clogit semantics. Differs from
+#'     beta across iterations, survival::clogit semantics. Differs from
 #'     the loop-terminating beta only when step-halving overshoots at the tail.)}
 #'   \item{vcov}{Model-based variance-covariance matrix}
 #'   \item{vcov_robust}{Clustered sandwich variance (if cluster supplied)}
@@ -116,7 +171,7 @@
 #'                      offset = sim$offset, cluster = sim$cluster)
 #' summary(fit_cl)
 #'
-#' # Sparse path — pass a sparseMatrix instead of a dense matrix
+#' # Sparse path, pass a sparseMatrix instead of a dense matrix
 #' # (Coefficients agree with the dense fit to machine epsilon.)
 #' \dontrun{
 #' library(Matrix)
@@ -153,7 +208,7 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
       stop("Sparse C++ kernel not loaded. Run source('load_fastclogit.R') ",
            "after placing clogit_newton_sparse.cpp / ",
            "clogit_sandwich_sparse.cpp alongside the dense .cpp files.")
-    # Coerce any sparse format to CSC (dgCMatrix) — Armadillo's sp_mat is CSC.
+    # Coerce any sparse format to CSC (dgCMatrix), Armadillo's sp_mat is CSC.
     if (!inherits(X, "dgCMatrix")) X <- methods::as(X, "CsparseMatrix")
     # nnz guard. The CSR view the kernel builds indexes row_ptr/col_idx with
     # int, so more than 2^31-1 non-zeros overflows it. ARMA_64BIT_WORD raises
@@ -301,6 +356,34 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
     p <- ncol(X)
   }
 
+  # --- Drop covariates that are not identified ------------------------------
+  # A column constant within every stratum cancels in the conditional
+  # likelihood. survival::clogit returns NA for these; we drop them, name them,
+  # and record them on the fit. Fitting them anyway produced a ridge-determined
+  # value with a meaningless standard error, silently: the ridge rescues the
+  # matrix inversion before $vcov_singular can fire, so that flag never caught
+  # them either.
+  #
+  # In a one-sided choice model this is every chooser-level main effect. They
+  # belong in the model only interacted with something that varies across
+  # alternatives.
+  sc <- .stratum_constant_cols(X, group_start, group_size, is_sparse)
+  dropped_unidentified <- character(0)
+  if (any(sc)) {
+    cn <- colnames(X)
+    if (is.null(cn)) cn <- paste0("V", seq_len(ncol(X)))
+    dropped_unidentified <- cn[sc]
+    warning("Dropping ", sum(sc), " column(s) that are constant within every ",
+            "stratum and therefore not identified in conditional logit: ",
+            paste(dropped_unidentified, collapse = ", "),
+            ". survival::clogit reports these as NA. Interact them with an ",
+            "alternative-level covariate, or remove them.")
+    X <- X[, !sc, drop = FALSE]
+    p <- ncol(X)
+    if (p == 0L)
+      stop("Every column is constant within strata; nothing is identified.")
+  }
+
   # --- Fit via C++ (sparse or dense) ---
   # Coerce tier-3 controls. Booleans go to bool, ints to int, doubles to numeric.
   tier3_enable_b        <- isTRUE(tier3_enable)
@@ -314,7 +397,7 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   sandwich_fn <- if (is_sparse) clogit_sandwich_sparse_cpp else clogit_sandwich_cpp
 
   if (is_sparse && verbose) {
-    # Coerce to numeric BEFORE multiplying — n * p as integers overflows
+    # Coerce to numeric BEFORE multiplying, n * p as integers overflows
     # at Paper-3 scale (70M * 128 ~ 8.9e9 > .Machine$integer.max).
     cells_dbl <- as.numeric(n) * as.numeric(p)
     message("Using sparse C++ kernel (nnz = ",
@@ -443,6 +526,9 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
             "regularization for vcov. SEs on aliased coefficients should ",
             "not be trusted. Set fit$vcov_singular to inspect.")
   }
+
+  fit$dropped_unidentified <- if (length(dropped_unidentified))
+    dropped_unidentified else NULL
 
   class(fit) <- "fastclogit"
   fit

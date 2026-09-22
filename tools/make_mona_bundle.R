@@ -1,5 +1,5 @@
 # =============================================================================
-# make_mona_bundle.R — generate mona/*.cpp from src/*.cpp
+# make_mona_bundle.R: generate mona/*.cpp from src/*.cpp
 #
 # WHY THIS EXISTS. The package build (R CMD INSTALL) compiles src/ and can use
 # a shared header. MONA's install is Rcpp::sourceCpp() on each file separately,
@@ -17,7 +17,7 @@
 # Run from the package root:
 #   Rscript tools/make_mona_bundle.R
 #
-# The R files in mona/ are NOT generated — they are byte-identical copies of
+# The R files in mona/ are NOT generated, they are byte-identical copies of
 # R/, handled by the same test.
 # =============================================================================
 
@@ -52,7 +52,7 @@ csr_body <- inline_csr_body(file.path(src_dir, "csr_matrix.h"))
 
 # --- Generate ----------------------------------------------------------------
 banner <- function(f) c(
-  sprintf("// GENERATED FROM src/%s by tools/make_mona_bundle.R — DO NOT EDIT.", f),
+  sprintf("// GENERATED FROM src/%s by tools/make_mona_bundle.R, DO NOT EDIT.", f),
   "// Edit the src/ copy and re-run the generator.",
   "")
 

@@ -1,4 +1,4 @@
-# helper-paths.R — locate the package source root from inside a test run.
+# helper-paths.R: locate the package source root from inside a test run.
 #
 # Tests run with the working directory at tests/testthat, but R CMD check runs
 # them from a copied-out directory where the source tree may not be complete.

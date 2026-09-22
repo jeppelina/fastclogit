@@ -1,5 +1,5 @@
 # =============================================================================
-# 06_khb.R — does khb_decompose recover a known mediation structure?
+# 06_khb.R: does khb_decompose recover a known mediation structure?
 #
 # khb_decompose() is exported, is load-bearing for Papers 3 and 4, and is
 # tested nowhere. Under a constructed DGP the decomposition has an analytic

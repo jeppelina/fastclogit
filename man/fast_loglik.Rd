@@ -26,7 +26,7 @@ Numeric vector of length 2: \code{c(loglik_null, loglik_fitted)}.
 }
 \description{
 Computes the null and fitted conditional log-likelihood via C++ Newton-Raphson.
-Returns only the two loglik values — no coefficients, variance, or model object.
+Returns only the two loglik values, no coefficients, variance, or model object.
 }
 \details{
 Designed for CLogitTree split evaluation where hundreds of candidate splits

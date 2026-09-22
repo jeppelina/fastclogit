@@ -1,4 +1,4 @@
-// clogit_sandwich.cpp — Clustered sandwich (robust) variance estimation
+// clogit_sandwich.cpp: Clustered sandwich (robust) variance estimation
 //
 // Computes V_robust = H^{-1} B H^{-1} where:
 //   H = observed information (negative Hessian)

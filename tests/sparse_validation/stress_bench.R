@@ -13,7 +13,7 @@ suppressPackageStartupMessages({
 })
 
 # ---------------------------------------------------------------------------
-# Data generator — defined at TOP so both driver and worker can use it.
+# Data generator, defined at TOP so both driver and worker can use it.
 # Same structure as gen_paper3_like (factor pair × decade × age × edu + dist).
 # ---------------------------------------------------------------------------
 gen_paper3_like_scalable <- function(n_strata, K = 30L, seed = 999L) {
@@ -56,7 +56,7 @@ gen_paper3_like_scalable <- function(n_strata, K = 30L, seed = 999L) {
 }
 
 # ===========================================================================
-# WORKER mode — runs a single fit and prints a CSV row to stdout
+# WORKER mode, runs a single fit and prints a CSV row to stdout
 # ===========================================================================
 if (Sys.getenv("FASTCLOGIT_BENCH_RUN") == "worker") {
   args     <- commandArgs(trailingOnly = TRUE)

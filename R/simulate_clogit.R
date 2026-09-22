@@ -29,12 +29,12 @@
 #' @param seed Integer. Random seed.
 #'
 #' @return A list with components:
-#'   \item{X}{Numeric matrix (n_total x p) — design matrix}
-#'   \item{choice}{Integer vector (n_total) — 1 for chosen, 0 otherwise}
-#'   \item{strata}{Integer vector (n_total) — choice set ID}
-#'   \item{offset}{Numeric vector (n_total) — McFadden/Manski correction (0 if !use_offset)}
-#'   \item{cluster}{Integer vector (n_total) — cluster ID}
-#'   \item{beta_true}{Named numeric vector — true coefficients}
+#'   \item{X}{Numeric matrix (n_total x p), design matrix}
+#'   \item{choice}{Integer vector (n_total), 1 for chosen, 0 otherwise}
+#'   \item{strata}{Integer vector (n_total), choice set ID}
+#'   \item{offset}{Numeric vector (n_total), McFadden/Manski correction (0 if !use_offset)}
+#'   \item{cluster}{Integer vector (n_total), cluster ID}
+#'   \item{beta_true}{Named numeric vector, true coefficients}
 #'   \item{data}{data.frame with all columns for easy clogit() comparison}
 #'   \item{n_egos}{Number of choice sets}
 #'   \item{n_alts}{Alternatives per set}

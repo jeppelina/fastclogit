@@ -1,4 +1,4 @@
-# test-basic.R — Validate fastclogit against survival::clogit
+# test-basic.R: Validate fastclogit against survival::clogit
 #
 # These tests use small simulated data where clogit() is tractable,
 # and verify that fastclogit produces matching results.
@@ -113,7 +113,7 @@ test_that("fastclogit matches clogit with clustered SEs", {
                           "+ offset(correction) + strata(strata_id) + cluster(cluster_id)"))
   fit_clogit <- clogit(fml, data = sim$data, method = "efron")
 
-  # Compare coefficients (should be identical — clustering only affects SEs)
+  # Compare coefficients (should be identical, clustering only affects SEs)
   beta_fast   <- fit_fast$coefficients
   beta_clogit <- coef(fit_clogit)
   common_names <- intersect(names(beta_fast), names(beta_clogit))

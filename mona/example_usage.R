@@ -1,5 +1,5 @@
 ###############################################################################
-#### example_usage.R — Quick demo of fastclogit on simulated data
+#### example_usage.R, Quick demo of fastclogit on simulated data
 ####
 #### Run this after source("load_fastclogit.R") to verify everything works
 #### and to see the main features in action.

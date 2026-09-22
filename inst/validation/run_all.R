@@ -1,5 +1,5 @@
 # =============================================================================
-# run_all.R — run every validation study and print one summary.
+# run_all.R: run every validation study and print one summary.
 #
 #   cd inst/validation && Rscript run_all.R
 #

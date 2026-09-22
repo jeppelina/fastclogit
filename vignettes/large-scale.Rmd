@@ -116,7 +116,7 @@ nothing, so a header on the include path becomes silently unreachable.
 
 The loader resolves its own directory by checking candidates until one
 demonstrably holds `clogit_newton.cpp`, rather than trusting
-`sys.frame(1)$ofile` — which names the *outermost* frame, so under nested
+`sys.frame(1)$ofile`, which names the *outermost* frame, so under nested
 `source()` it points at whichever file started the chain. Set
 `.this_script_dir` or `CODE_PATH` before sourcing to pin it.
 

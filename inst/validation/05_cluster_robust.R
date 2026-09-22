@@ -1,5 +1,5 @@
 # =============================================================================
-# 05_cluster_robust.R — do the clustered sandwich SEs do their job?
+# 05_cluster_robust.R: do the clustered sandwich SEs do their job?
 #
 # Nothing currently tests that the sandwich does anything useful. The kernels
 # also apply a finite-sample correction C/(C-1) * (G-1)/G, described in the

@@ -1,4 +1,4 @@
-# fastclogit — MONA Usage Guide
+# fastclogit, MONA Usage Guide
 
 Memory-efficient conditional logit for large-scale discrete choice data.
 This guide covers how to use fastclogit on MONA (or any SCB/restricted
@@ -10,14 +10,14 @@ Upload the `mona/` directory to your MONA project. The required files are:
 
 | File | Description |
 |---|---|
-| `load_fastclogit.R` | Loader script — compiles C++ and sources everything |
+| `load_fastclogit.R` | Loader script, compiles C++ and sources everything |
 | `clogit_newton.cpp` | C++ Newton-Raphson optimizer (dense path) |
 | `clogit_newton_sparse.cpp` | **NEW v0.4** Sparse-X Newton kernel (CSR row walk) |
 | `clogit_sandwich.cpp` | C++ clustered sandwich variance (dense) |
 | `clogit_sandwich_sparse.cpp` | **NEW v0.4** Sparse-X cluster sandwich |
 | `fastclogit.R` | Core fitting function (auto-dispatches dense/sparse) |
 | `fastclogit_methods.R` | S3 methods: summary, print, coef, vcov, confint, tidy |
-| `fclogit.R` | Formula interface — main entry for most users |
+| `fclogit.R` | Formula interface, main entry for most users |
 | `khb_decompose.R` | KHB mediation decomposition (Kohler, Karlson & Holm 2011) |
 
 The sparse path is optional: if you only upload the dense files
@@ -96,7 +96,7 @@ fit <- fastclogit(
 )
 ```
 
-### Sparse-X path (factor-heavy designs at scale) — NEW in v0.4
+### Sparse-X path (factor-heavy designs at scale), NEW in v0.4
 
 When the design matrix has many factor dummies and few non-zeros per row
 (typical for an interaction-heavy partner-choice spec), passing a
@@ -107,7 +107,7 @@ machine epsilon on simulated data up to 1M × 92 with cluster SEs).
 ```r
 library(Matrix)
 
-# Build X sparse directly from the formula — never materialises a dense
+# Build X sparse directly from the formula, never materialises a dense
 # matrix at any point. This is the key memory win at MONA scale.
 X_sparse <- Matrix::sparse.model.matrix(
   ~ pair_gen_meso * decade + f2 * decade + Edudiff * decade +
@@ -131,7 +131,7 @@ fit <- fastclogit(
 |---|---|
 | All continuous predictors, dense X | dense (`matrix`) |
 | Mostly factors, density < 30%, n × p < 500M cells | sparse (`dgCMatrix`) |
-| Paper-3-scale factor model (>10M rows, >50 cols, density ≤10%) | **sparse mandatory** — dense will OOM |
+| Paper-3-scale factor model (>10M rows, >50 cols, density ≤10%) | **sparse mandatory**, dense will OOM |
 
 At MONA scale (37M rows × 128 cols, ~5% density), the sparse path takes
 a full-resolution fit from ~95 minutes / ~225 GB to ~80 seconds / ~30 GB.
@@ -184,7 +184,7 @@ The optimizer uses three convergence criteria (both kernels):
 1. **Gradient norm**: `max|grad| < tol` (default tol = 1e-6)
 2. **Relative log-lik change + small gradient + small unhalved Newton step**:
    the three-way check distinguishes "at the MLE" from "step-halving has been
-   killing our steps". *Updated in v0.4 — see below.*
+   killing our steps". *Updated in v0.4, see below.*
 3. **Stall detection**: log-likelihood unchanged for 5 consecutive iterations
 
 This ensures robust convergence on very large datasets (75M+ rows) where
@@ -197,11 +197,11 @@ for the secondary criterion. On models with rare-cell × decade interactions
 ill-conditioned directions while the gradient looked acceptable, so the fit
 silently "converged" at iter 7 with interaction coefficients still essentially
 at zero. The fix is the third check on the previous iteration's unhalved
-Newton step size — at a true MLE both gradient AND Newton step go to zero;
+Newton step size, at a true MLE both gradient AND Newton step go to zero;
 at a step-halving stall the gradient is small but the intended step is huge.
 
 If a model reports `converged = FALSE`, the coefficients are typically still
-reliable — check the log-likelihood and `max(abs(fit$gradient))`.
+reliable, check the log-likelihood and `max(abs(fit$gradient))`.
 
 
 ## Dependencies
@@ -218,29 +218,29 @@ reliable — check the log-likelihood and `max(abs(fit$gradient))`.
 
 ## Troubleshooting
 
-**"Cannot find: clogit_newton.cpp"** — Make sure all files are in the same
+**"Cannot find: clogit_newton.cpp"**, Make sure all files are in the same
 directory, and that `load_fastclogit.R` is sourced from that directory (or
 set `setwd()` first).
 
-**Compilation errors** — Check that Rcpp and RcppArmadillo are installed:
+**Compilation errors**, Check that Rcpp and RcppArmadillo are installed:
 `packageVersion("Rcpp")`. If not, ask SCB to install them.
 
-**Model doesn't converge** — The three-tier convergence should handle most
+**Model doesn't converge**, The three-tier convergence should handle most
 cases. If you still see `converged = FALSE`, try `max_iter = 200` or check
 for perfect separation (a predictor that perfectly predicts the outcome
 within some strata).
 
-**"subscript out of bounds" in summary()** — Make sure you're using the
+**"subscript out of bounds" in summary()**, Make sure you're using the
 latest `fastclogit_methods.R` (fixes an R 4.5.x cbind naming issue).
 
-**"could not find function clogit_fit_sparse_cpp"** — `load_fastclogit.R`
+**"could not find function clogit_fit_sparse_cpp"**, `load_fastclogit.R`
 didn't compile the sparse files. Confirm `clogit_newton_sparse.cpp` and
 `clogit_sandwich_sparse.cpp` are in the same directory and re-run
 `source("load_fastclogit.R")`. If you're on the dense-only setup
 intentionally, pass a dense `matrix` (not a `sparseMatrix`) to
 `fastclogit()`.
 
-**"csr_matrix.h: No such file or directory" during compile** — this was
+**"csr_matrix.h: No such file or directory" during compile**, this was
 a bug in v0.4.0 (the sparse Newton .cpp originally included a separate
 header). v0.4.1+ inlines the CSR struct directly into both sparse `.cpp`
 files, so the header is no longer needed. Update your MONA copies of
@@ -248,8 +248,8 @@ files, so the header is no longer needed. Update your MONA copies of
 cause was that R/make rewrote include paths containing `$` (common in
 UNC paths to administrative shares like `\\server\projekt\PROJID$\`).
 
-**Sparse fit returns slightly different coefficients than dense** — Both
+**Sparse fit returns slightly different coefficients than dense**, Both
 kernels converge to the same MLE; differences should be below ~1e-12 on
 the same data after the v0.4 convergence patch. If you see larger drift
 (>1e-6), check that both kernels were compiled from the same source
-version — re-source `load_fastclogit.R` and refit.
+version, re-source `load_fastclogit.R` and refit.

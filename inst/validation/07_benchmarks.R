@@ -1,5 +1,5 @@
 # =============================================================================
-# 07_benchmarks.R — reproducible timing and memory, plus the tol-scaling
+# 07_benchmarks.R: reproducible timing and memory, plus the tol-scaling
 # observation.
 #
 # Every configuration runs in its OWN PROCESS under /usr/bin/time -l, so the
@@ -42,10 +42,14 @@ run_one <- function(engine, n_sets, n_alts, p_fac) {
              iters = f[9], peak_rss_gb = rss_gb, stringsAsFactors = FALSE)
 }
 
+# survival::clogit runs at every size here. An earlier version of this grid
+# skipped it above 100,000 rows on the assumption it would not cope, and the
+# README then printed a dash where a real number belonged. It copes: it is
+# slower and needs more memory, which is the honest and more useful comparison.
 grid <- list(
   list(n_sets =  10000L, n_alts = 10L, p_fac = 20L, survival = TRUE),
-  list(n_sets =  50000L, n_alts = 10L, p_fac = 50L, survival = FALSE),
-  list(n_sets =  50000L, n_alts = 20L, p_fac = 90L, survival = FALSE)
+  list(n_sets =  50000L, n_alts = 10L, p_fac = 50L, survival = TRUE),
+  list(n_sets =  50000L, n_alts = 20L, p_fac = 90L, survival = TRUE)
 )
 
 rows <- list()
@@ -157,10 +161,13 @@ vc_check("tol-semantics",
          "tol = 1e-6 is comfortably attainable up to 200k strata",
          all(floor_grad < 1e-6),
          sprintf("max attainable floor %.1e", max(floor_grad)))
+# Fixed in v0.5.0: a fit that reaches the iteration cap with a flat
+# log-likelihood and a gradient below the plateau ceiling is now reported as
+# flat_optimum, not as a failure. Before the fix, 2 of these 4 came back
+# iter_max at max|grad| of 3.8e-13 and 1.1e-11.
 vc_check("tol-semantics",
-         "an unreachable tol is reported as failure, not recognised [finding]",
+         "a flat optimum at the iteration cap is not reported as failure",
          n_capped == 0L,
-         sprintf("%d/%d fits hit max_iter with max|grad| < 1e-10",
-                 n_capped, length(scales)))
+         sprintf("%d/%d fits still report iter_max", n_capped, length(scales)))
 
 write.csv(tg, file.path(vc_dir, "results_07_tolscaling.csv"), row.names = FALSE)

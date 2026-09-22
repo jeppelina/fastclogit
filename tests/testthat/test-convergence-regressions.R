@@ -1,4 +1,4 @@
-# test-convergence-regressions.R — Tier 3 of the test plan.
+# test-convergence-regressions.R: Tier 3 of the test plan.
 #
 # One constructed problem per defect that has actually bitten us. These assert
 # on BEHAVIOUR (convergence route, iteration trace, absence of an error), not

@@ -66,7 +66,7 @@ moving. So tier-3 additionally requires the change to persist over
 very small step.
 
 That last condition matters more than it looks. It is evidence the optimiser is
-on a genuinely flat ridge rather than simply finished — and a bug in the line
+on a genuinely flat ridge rather than simply finished, and a bug in the line
 search can *manufacture* it. Treat a `plateau` fit as a fit worth a second
 look, not as a failure.
 
@@ -94,7 +94,7 @@ Nothing after that point recovers, and the fit should be discarded rather than
 given more iterations.
 
 **`halving_count` sits at 20 every iteration.** Either the direction is bad, or
-the acceptance test is comparing rounding noise — which happens once
+the acceptance test is comparing rounding noise, which happens once
 `|loglik|` is large enough that `1e-10` falls below one unit in the last place.
 The kernel now scales that tolerance with `|loglik|`.
 
@@ -146,4 +146,4 @@ You will rarely touch these, and the defaults are what the papers run.
 5. `line_search` → do not use this fit.
 6. Check `fit$vcov_singular`. If `TRUE`, some SEs rest on a ridge rather than
    on the data. Note that it does **not** fire for stratum-constant columns,
-   which are a separate problem — see `?fastclogit`.
+   which are a separate problem, see `?fastclogit`.

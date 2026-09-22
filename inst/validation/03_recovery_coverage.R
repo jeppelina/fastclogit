@@ -1,5 +1,5 @@
 # =============================================================================
-# 03_recovery_coverage.R — the statistical backbone.
+# 03_recovery_coverage.R: the statistical backbone.
 #
 # Nothing in the package's test suite checks that the estimator is unbiased,
 # that the reported SEs match the sampling variability of the estimator, or

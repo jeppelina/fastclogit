@@ -1,7 +1,7 @@
 #' Fast Conditional Log-Likelihood (loglik only)
 #'
 #' Computes the null and fitted conditional log-likelihood via C++ Newton-Raphson.
-#' Returns only the two loglik values — no coefficients, variance, or model object.
+#' Returns only the two loglik values, no coefficients, variance, or model object.
 #'
 #' Designed for CLogitTree split evaluation where hundreds of candidate splits
 #' are tested and only the likelihood-ratio statistic matters.

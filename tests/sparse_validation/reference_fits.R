@@ -84,7 +84,7 @@ dir.create(REF_DIR, recursive = TRUE, showWarnings = FALSE)
     # through the line-search-defect era: both defects act by stopping
     # somewhere else, and the route plus the final gradient is what shows it.
     # A reference that converged via the tier-3 plateau, hit the iteration
-    # cap, or ended with a loose gradient is not a trustworthy baseline —
+    # cap, or ended with a loose gradient is not a trustworthy baseline,
     # refit it before treating it as one.
     convergence_criterion = fit$convergence_criterion,
     grad_max              = max(abs(fit$gradient)),

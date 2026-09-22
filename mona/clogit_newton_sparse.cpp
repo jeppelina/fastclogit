@@ -1,13 +1,13 @@
-// GENERATED FROM src/clogit_newton_sparse.cpp by tools/make_mona_bundle.R — DO NOT EDIT.
+// GENERATED FROM src/clogit_newton_sparse.cpp by tools/make_mona_bundle.R, DO NOT EDIT.
 // Edit the src/ copy and re-run the generator.
 
-// clogit_newton_sparse.cpp — Newton-Raphson conditional logit (sparse design)
+// clogit_newton_sparse.cpp: Newton-Raphson conditional logit (sparse design)
 //
 // Sparse-X counterpart to clogit_newton.cpp.
 //
 // At Paper-3 Step 4 scale (36.7M rows × 128 cols, density ~5%) the dense X is
 // 38 GB. The sparse representation is ~4 GB and the per-iteration ops cost
-// ~3-5 sec each — for a typical 20-iter fit, total wall time ~80 sec instead
+// ~3-5 sec each, for a typical 20-iter fit, total wall time ~80 sec instead
 // of ~5650 sec (dense, n=100), and peak memory drops from ~225 GB to ~30 GB.
 //
 // Algorithm (per Newton iteration):
@@ -53,7 +53,7 @@
 // ---- BEGIN generated from src/csr_matrix.h (do not edit here) --------
 // Inlined so Rcpp::sourceCpp() needs no header on the include path.
 // Edit src/csr_matrix.h and re-run tools/make_mona_bundle.R instead.
-// csr_matrix.h — Row-major (CSR) view of an arma::sp_mat (CSC), shared by
+// csr_matrix.h: Row-major (CSR) view of an arma::sp_mat (CSC), shared by
 // the sparse Newton kernel and the sparse cluster-sandwich. Build O(nnz).
 //
 // Used by clogit_newton_sparse.cpp + clogit_sandwich_sparse.cpp. Keep this
@@ -91,7 +91,7 @@ struct CsrMatrix {
         n_cols = static_cast<int>(X.n_cols);
 
         // Pass 1: count nnz per row by column-walking (faster than the
-        // general iterator — cache-friendly CSC traversal).
+        // general iterator, cache-friendly CSC traversal).
         std::vector<int> row_nnz(n_rows, 0);
         for (int j = 0; j < n_cols; ++j) {
             for (arma::sp_mat::const_col_iterator it = X.begin_col(j);
@@ -128,7 +128,7 @@ struct CsrMatrix {
 
 
 // ===========================================================================
-// Inline helpers — per-iteration accumulators
+// Inline helpers, per-iteration accumulators
 // ===========================================================================
 
 // Compute eta = X*beta + offset using CSR row walk (writes into eta).
@@ -236,7 +236,7 @@ static inline void compute_grad_hess(
     csr_mat_vec_plus_offset(X, beta, offset, eta_ws);
 
     grad.zeros();
-    H1_ws.zeros();   // workspace — caller owns the allocation
+    H1_ws.zeros();   // workspace, caller owns the allocation
     H2_ws.zeros();
 
     loglik_out = 0.0;
@@ -294,7 +294,7 @@ static inline void compute_grad_hess(
                 xbar_k_ws(col) += p_i * val;
             }
 
-            // H1 += p_i * x_i * x_i.t() (full symmetric fill — branch-free
+            // H1 += p_i * x_i * x_i.t() (full symmetric fill, branch-free
             // inner loop, hot path).
             for (int q1 = s; q1 < t; ++q1) {
                 const int    a    = X.col_idx[q1];
@@ -317,7 +317,7 @@ static inline void compute_grad_hess(
             grad(idx) -= xbar_k_ws(idx);
         }
 
-        // H2 += xbar_k * xbar_k.t() — restrict to nonzero indices.
+        // H2 += xbar_k * xbar_k.t(), restrict to nonzero indices.
         // Fill both halves (nnz_x is small; branch-free inner loop wins
         // over the upper-only variant at this size).
         const size_t nnz_x = nz_xbar_ws.size();
@@ -428,6 +428,13 @@ Rcpp::List clogit_fit_sparse_cpp(
 
     // Tier-3 state
     int    plateau_count       = 0;
+    // Flatness and the last gradient, tracked WITHOUT the plateau rule's
+    // side-conditions, so that a fit which simply ran out of iterations
+    // chasing an unreachable tol can still be recognised at the end of the
+    // loop. See the terminal check after the loop.
+    int    flat_count          = 0;
+    double last_grad_max       = std::numeric_limits<double>::infinity();
+    double last_loglik_abs     = 0.0;
     int    prev_halving_count  = 0;
     double prev_step_size      = 1.0;
     // Patch: track the previous UNHALVED Newton step magnitude so the
@@ -476,6 +483,15 @@ Rcpp::List clogit_fit_sparse_cpp(
             best_loglik_iter = iter + 1;
         }
 
+        // Flatness bookkeeping, deliberately free of the plateau rule's
+        // "optimiser is struggling" evidence: a cleanly converged fit never
+        // produces halvings, so that evidence can never appear for exactly
+        // the fits this is meant to catch.
+        if (iter > 0 && rel_ll_change < tier3_plateau_tol) flat_count++;
+        else if (iter > 0) flat_count = 0;
+        last_grad_max   = grad_max;
+        last_loglik_abs = std::fabs(loglik_new);
+
         int tier_fired = 0;
 
         // PRIMARY
@@ -521,7 +537,7 @@ Rcpp::List clogit_fit_sparse_cpp(
         }
 
         // Log this iter (step_size/halving describe the step that produced
-        // the current beta — prev iter's Newton step).
+        // the current beta, prev iter's Newton step).
         log_iter.push_back(iter + 1);
         log_loglik.push_back(loglik_new);
         log_grad_max.push_back(grad_max);
@@ -671,7 +687,27 @@ Rcpp::List clogit_fit_sparse_cpp(
         beta = beta_new;
     }
 
-    if (!converged) convergence_code = 4;
+    // TERMINAL CHECK. Running out of iterations is not the same as failing.
+    // See the matching block in clogit_newton.cpp for the full reasoning: an
+    // unreachable tol makes the optimiser keep stepping long after it has
+    // arrived, and the in-loop plateau rule cannot rescue it because that rule
+    // needs evidence of struggling which a converged fit never produces.
+    if (!converged) {
+        const double term_floor = std::max(tier3_grad_floor,
+                                           GRAD_REL_TOL * last_loglik_abs);
+        if (tier3_enable && flat_count >= tier3_plateau_iters &&
+            last_grad_max < term_floor) {
+            converged        = true;
+            convergence_code = 6;
+            if (verbose) {
+                Rprintf("  Reached max_iter, but the log-likelihood was flat for %d "
+                        "iterations\n  and max|grad| = %.2e is below the floor (%.2e). "
+                        "At a flat optimum.\n", flat_count, last_grad_max, term_floor);
+            }
+        } else {
+            convergence_code = 4;
+        }
+    }
 
     // Recompute Hessian at best_beta for variance estimation
     arma::vec beta_final = best_beta;

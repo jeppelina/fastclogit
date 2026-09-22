@@ -1,5 +1,5 @@
 ###############################################################################
-#### load_fastclogit.R — Load fastclogit on MONA without package install
+#### load_fastclogit.R, Load fastclogit on MONA without package install
 ####
 #### Compiles the C++ files via Rcpp::sourceCpp() and sources the R files.
 #### Runs a quick sanity check on simulated data to verify everything works.
@@ -82,7 +82,7 @@ cpp_newton          <- file.path(FASTCLOGIT_DIR, "clogit_newton.cpp")
 cpp_newton_sparse   <- file.path(FASTCLOGIT_DIR, "clogit_newton_sparse.cpp")
 cpp_sandwich        <- file.path(FASTCLOGIT_DIR, "clogit_sandwich.cpp")
 cpp_sandwich_sparse <- file.path(FASTCLOGIT_DIR, "clogit_sandwich_sparse.cpp")
-# (v0.4.1: no csr_matrix.h here — its contents are inlined into the
+# (v0.4.1: no csr_matrix.h here, its contents are inlined into the
 # sparse .cpp files to avoid include-path issues on UNC paths with '$'.)
 
 if (!file.exists(cpp_newton))   stop("Cannot find: ", cpp_newton)
@@ -90,7 +90,7 @@ if (!file.exists(cpp_sandwich)) stop("Cannot find: ", cpp_sandwich)
 
 # MONA's source-mode install: all four .cpp files are self-contained.
 # The sparse kernels inline the CsrMatrix struct rather than relying on
-# a csr_matrix.h header file — this avoids include-path failures on UNC
+# a csr_matrix.h header file, this avoids include-path failures on UNC
 # paths that R/make may rewrite (e.g. paths containing '$').
 #
 # env = globalenv() makes compiled functions land in the global env
@@ -123,7 +123,7 @@ if (file.exists(cpp_newton_sparse) && file.exists(cpp_sandwich_sparse)) {
   if (!exists("clogit_sandwich_sparse_cpp", mode = "function"))
     stop("Sparse kernel compiled but clogit_sandwich_sparse_cpp not exported.")
 } else {
-  cat("  Sparse kernel files not found — sparse-X dispatch will be disabled.\n")
+  cat("  Sparse kernel files not found, sparse-X dispatch will be disabled.\n")
   cat("    Looked for: ", basename(cpp_newton_sparse),
       " and ", basename(cpp_sandwich_sparse), "\n", sep = "")
 }
@@ -188,7 +188,7 @@ tryCatch({
   rm(test_sim, test_fit)
 }, error = function(e) {
   cat("FAIL: ", conditionMessage(e), "\n")
-  warning("fastclogit sanity check failed — functions are loaded but may not work correctly")
+  warning("fastclogit sanity check failed, functions are loaded but may not work correctly")
 })
 
 cat("=== fastclogit ready ===\n")

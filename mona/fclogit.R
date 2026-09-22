@@ -12,7 +12,7 @@
 #' Note: \code{fclogit()} builds X as a dense numeric matrix. For factor-heavy
 #' designs at very large scale (>10M rows with many factor levels), build X as
 #' a sparse matrix via \code{Matrix::sparse.model.matrix()} and call
-#' \code{\link{fastclogit}()} directly — see Examples and the
+#' \code{\link{fastclogit}()} directly, see Examples and the
 #' \dQuote{Sparse-X path} section of \code{?fastclogit}.
 #'
 #' @param formula A formula of the form \code{choice ~ x1 + x2 + factor_var}.
@@ -130,7 +130,7 @@ fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
   }
 
   # -------------------------------------------------------------------------
-  # 3. Handle NAs — complete cases on all needed columns
+  # 3. Handle NAs, complete cases on all needed columns
   # -------------------------------------------------------------------------
   n_total <- nrow(data)
   complete_mask <- rep(TRUE, n_total)

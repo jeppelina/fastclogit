@@ -273,7 +273,7 @@ khb_decompose <- function(data,
     fit_data[[zr]] <- resid_store[[zr]]
   }
 
-  # Free resid_store and slim now — no longer needed
+  # Free resid_store and slim now, no longer needed
   rm(resid_store, slim)
   gc(verbose = FALSE)
 
@@ -326,7 +326,7 @@ khb_decompose <- function(data,
     }
   )
 
-  # Free fit_data — both models are fitted
+  # Free fit_data, both models are fitted
   rm(fit_data)
   gc(verbose = FALSE)
 

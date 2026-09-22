@@ -1,5 +1,5 @@
 ###############################################################################
-#### test_khb.R — Validation suite for khb_fastclogit.R
+#### test_khb.R, Validation suite for khb_fastclogit.R
 ####
 #### Tests the KHB decomposition end-to-end on simulated data:
 ####   1. Basic plumbing: khb_clogit() runs, returns correct structure
@@ -124,7 +124,7 @@ generate_khb_data <- function(n_egos = 500, n_alts = 30,
 
 
 # ============================================================================
-# TEST 1: Basic plumbing — khb_clogit runs and returns expected structure
+# TEST 1: Basic plumbing, khb_clogit runs and returns expected structure
 # ============================================================================
 
 cat("--- Test 1: Basic plumbing ---\n")
@@ -188,7 +188,7 @@ cat("  Test 1:", if (pass1) "PASS" else "FAIL", "\n\n")
 
 
 # ============================================================================
-# TEST 2: Known mediation — indirect effect should be meaningfully > 0
+# TEST 2: Known mediation, indirect effect should be meaningfully > 0
 #
 # DGP: Z = 0.6*X + noise, Y ~ 0.5*X + 0.8*Z + 0.3*C
 # Total effect of X ≈ 0.5 + 0.8*0.6 = 0.98  (via Z path)
@@ -228,7 +228,7 @@ if (!pass1) {
 
 
 # ============================================================================
-# TEST 3: No mediation — Z is pure noise, indirect ≈ 0
+# TEST 3: No mediation, Z is pure noise, indirect ≈ 0
 #
 # Key: same X, but Z_noise is independent of X. The reduced model with
 # Z_noise_resid should give ≈ same coefficient as full model with Z_noise.
@@ -272,7 +272,7 @@ pass3 <- tryCatch({
 
 
 # ============================================================================
-# TEST 4: Factor key variable — verify multi-level decomposition
+# TEST 4: Factor key variable, verify multi-level decomposition
 #
 # Creates a 3-level factor X (ref, level2, level3) and decomposes each.
 # ============================================================================

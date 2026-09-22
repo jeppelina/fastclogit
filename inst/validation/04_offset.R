@@ -1,5 +1,5 @@
 # =============================================================================
-# 04_offset.R — does the McFadden-Manski correction actually work?
+# 04_offset.R: does the McFadden-Manski correction actually work?
 #
 # THE HIGHEST-CONSEQUENCE STUDY HERE. The correction is the load-bearing
 # assumption in Papers 1, 3 and 4, and nothing anywhere tests that a fit on a

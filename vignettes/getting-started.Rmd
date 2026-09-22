@@ -103,8 +103,8 @@ fit_sp <- fastclogit(
 max(abs(coef(fit_sp) - coef(fit2)))
 ```
 
-For very large factor models — an interactions-heavy design at 1M+ rows with
-90+ columns at ~5% density, say — build the sparse design matrix directly from
+For very large factor models, an interactions-heavy design at 1M+ rows with
+90+ columns at ~5% density, say, build the sparse design matrix directly from
 a formula via `Matrix::sparse.model.matrix()` so the dense version is never
 built:
 

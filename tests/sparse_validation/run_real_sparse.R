@@ -10,7 +10,7 @@ source("tests/sparse_validation/compare.R")
 source("tests/sparse_validation/reference_fits.R")
 source("tests/sparse_validation/run_all.R")
 
-# Real sparse fitter — passes dgCMatrix directly; fastclogit dispatches
+# Real sparse fitter, passes dgCMatrix directly; fastclogit dispatches
 # to clogit_fit_sparse_cpp via is(X, "sparseMatrix") check.
 real_sparse_fit <- function(Xsp, choice, strata, cluster = NULL) {
   stopifnot(inherits(Xsp, "sparseMatrix"))

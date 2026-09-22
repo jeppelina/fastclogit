@@ -24,7 +24,7 @@ fastclogit(
 \arguments{
 \item{X}{Design matrix (n x p). Either a numeric `matrix` (dense path)
 or any `Matrix::sparseMatrix` (sparse path; coerced to `dgCMatrix`).
-All predictors must be pre-expanded — factors already dummy-coded.
+All predictors must be pre-expanded, factors already dummy-coded.
 No intercept (not identified in conditional logit). The sparse path
 requires `clogit_newton_sparse.cpp` / `clogit_sandwich_sparse.cpp`
 to have been compiled (automatic in the installed package; via
@@ -77,7 +77,7 @@ optimizer is genuinely struggling on a flat ridge.}
 \value{
 An object of class "fastclogit" with components:
   \item{coefficients}{Named vector of estimated coefficients (best-loglik
-    beta across iterations — survival::clogit semantics. Differs from
+    beta across iterations, survival::clogit semantics. Differs from
     the loop-terminating beta only when step-halving overshoots at the tail.)}
   \item{vcov}{Model-based variance-covariance matrix}
   \item{vcov_robust}{Clustered sandwich variance (if cluster supplied)}
@@ -153,7 +153,7 @@ fit_cl <- fastclogit(sim$X, sim$choice, sim$strata,
                      offset = sim$offset, cluster = sim$cluster)
 summary(fit_cl)
 
-# Sparse path — pass a sparseMatrix instead of a dense matrix
+# Sparse path, pass a sparseMatrix instead of a dense matrix
 # (Coefficients agree with the dense fit to machine epsilon.)
 \dontrun{
 library(Matrix)

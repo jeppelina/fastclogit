@@ -23,7 +23,7 @@ survival would have to be wrong in the same way for the comparison to fail.
 
 These studies check the statistics.
 
-## Results, v0.5.0 (2026-09-22): 35 of 36 checks pass
+## Results, v0.5.0 (2026-09-22): 36 of 36 checks pass
 
 | Study | Checks | What it establishes |
 |---|---|---|
@@ -65,9 +65,13 @@ because `gc()` cannot see Armadillo's allocations):
 
 | rows | p | dense | sparse | survival |
 |---|---|---|---|---|
-| 100,000 | 20 | 0.33 s / 0.30 GB | 0.05 s / 0.25 GB | 1.06 s / 0.40 GB |
-| 500,000 | 50 | 4.32 s / 1.24 GB | 0.26 s / 0.41 GB | — |
-| 1,000,000 | 90 | 21.34 s / 2.91 GB | 0.60 s / 0.64 GB | — |
+| 100,000 | 20 | 0.32 s / 0.31 GB | 0.05 s / 0.26 GB | 1.09 s / 0.43 GB |
+| 500,000 | 50 | 4.11 s / 1.30 GB | 0.26 s / 0.43 GB | 11.21 s / 2.15 GB |
+| 1,000,000 | 90 | 31.82 s / 3.07 GB | 0.62 s / 0.62 GB | 45.23 s / 4.01 GB |
+
+An earlier version of this grid skipped `survival::clogit` above 100,000 rows
+on the assumption it would not cope, and printed a dash where a real number
+belonged. It copes at all three sizes.
 
 All engines reach the same log-likelihood to a relative spread of exactly 0.
 
@@ -95,19 +99,21 @@ Four defects, all fixed in v0.5.0:
    assigns each stratum to the cluster of its first row, so the robust SEs were
    for a clustering the caller never asked for. Now a warning.
 
-## Open finding
+## Fixed after these studies ran
 
-`07_benchmarks` reports one deliberate failure. When `tol` is set below the
-attainable numerical floor, the optimiser grinds to `max_iter` and reports
-**not converged** at a gradient that is already tiny: at 10,000 strata with
-`tol = 1e-14` it ran all 200 iterations and finished at `max|grad| = 3.8e-13`.
-The plateau rule does not rescue it, because that rule's side-condition
-requires evidence of struggling (halvings, or a tiny step) that a cleanly
-converged fit never produces.
+Two findings from the runs above were fixed in v0.5.0 rather than documented.
 
-v0.5.0 makes the warning say so explicitly rather than changing the criterion.
-Changing convergence behaviour under three live papers is not a patch-time
-decision.
+**A flat optimum at the iteration cap was reported as a failure.** Setting
+`tol` below what the arithmetic can deliver made the optimiser keep stepping
+long after it had arrived: at 10,000 strata with `tol = 1e-14` a fit ran all
+200 iterations and finished at `max|grad| = 3.8e-13`, labelled `iter_max`. The
+in-loop plateau rule could not rescue it, because that rule wants evidence the
+optimiser is struggling and a cleanly converged fit never produces any. A
+terminal check now recognises the case and reports `flat_optimum`.
+
+**Stratum-constant columns were fitted silently.** They are not identified;
+`survival::clogit` returns NA. They are now detected, named in a warning,
+dropped, and listed in `$dropped_unidentified`.
 
 ## A hypothesis these studies refuted
 
@@ -149,7 +155,7 @@ The second forced the chosen alternative in *on top of* `n_s` draws per
 stratum, which is a different sampling protocol from the one `-log(n_s/N_s)` is
 derived for. Only when the chosen alternative occupies one of its stratum's
 `n_s` slots does the familiar formula apply. Both errors were in the
-simulation, not the package — but production pipelines carry dedicated patch
+simulation, not the package, but production pipelines carry dedicated patch
 scripts for exactly this bookkeeping, which is some evidence about how easy it
 is to get wrong.
 
@@ -160,7 +166,7 @@ covariates across an ego's several choice sets also does nothing, and this one
 is subtler: the per-stratum score has conditional mean zero given `X`, so
 `Cov(s_1, s_2) = E[Cov(s_1,s_2|X)] + Cov(0, 0) = 0`. Correlating the design
 does not correlate the scores. Measured model-SE coverage under that design was
-0.965 and 0.950 — no clustering problem to solve. The study now uses exact
+0.965 and 0.950, no clustering problem to solve. The study now uses exact
 duplication, where the truth is analytic.
 
 ## Deferred

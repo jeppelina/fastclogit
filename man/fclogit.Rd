@@ -86,7 +86,7 @@ want to supply a pre-built design matrix.
 Note: \code{fclogit()} builds X as a dense numeric matrix. For factor-heavy
 designs at very large scale (>10M rows with many factor levels), build X as
 a sparse matrix via \code{Matrix::sparse.model.matrix()} and call
-\code{\link{fastclogit}()} directly — see Examples and the
+\code{\link{fastclogit}()} directly, see Examples and the
 \dQuote{Sparse-X path} section of \code{?fastclogit}.
 }
 \examples{

@@ -1,10 +1,10 @@
 #!/usr/bin/env Rscript
 # ============================================================================
-# bench_logan.R — Speed & memory benchmark: fastclogit vs survival::clogit
+# bench_logan.R: Speed & memory benchmark: fastclogit vs survival::clogit
 #
 # Two benchmarks using the Logan occupational mobility data:
-#   Part 1 — SPEED: fit the same model N times, compare wall-clock time
-#   Part 2 — MEMORY: single fit on increasingly large data, compare peak RSS
+#   Part 1, SPEED: fit the same model N times, compare wall-clock time
+#   Part 2, MEMORY: single fit on increasingly large data, compare peak RSS
 #
 # Usage:
 #   Rscript bench/bench_logan.R              # default 1000 speed fits
@@ -137,7 +137,7 @@ invisible(clogit(clogit_fml, data = clogit_df, method = "efron"))
 
 # --- fastclogit -------------------------------------------------------------
 cat("Running fastclogit x", n_fits, "...\n")
-# Helper: peak Vcells MB from gc() — R 4.1+ has 7 columns, older has 6
+# Helper: peak Vcells MB from gc(), R 4.1+ has 7 columns, older has 6
 peak_mb <- function() {
   g <- gc(verbose = FALSE)
   # "max used (Mb)" is the last column, row 2 (Vcells)
@@ -206,7 +206,7 @@ if (length(common) > 0) {
 }
 
 # ============================================================================
-# 4. MEMORY BENCHMARK — single fit on large data
+# 4. MEMORY BENCHMARK, single fit on large data
 # ============================================================================
 cat("\n=== Part 2: Memory Benchmark (large data) ===\n\n")
 

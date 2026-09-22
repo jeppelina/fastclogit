@@ -1,5 +1,5 @@
 # =============================================================================
-# 08_assumptions.R — what the kernels assume, and what happens when it is false.
+# 08_assumptions.R: what the kernels assume, and what happens when it is false.
 #
 # The failure mode that matters is SILENCE: a violated assumption that produces
 # a fit which converges cleanly to the wrong answer. Each probe below states

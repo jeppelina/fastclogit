@@ -1,4 +1,4 @@
-// clogit_loglik.cpp — Loglik-only conditional logit for split evaluation
+// clogit_loglik.cpp: Loglik-only conditional logit for split evaluation
 //
 // Stripped-down Newton-Raphson that returns ONLY the log-likelihood values:
 //   loglik_null  = log-likelihood at beta=0 (with offset)
@@ -119,7 +119,7 @@ Rcpp::NumericVector clogit_loglik_cpp(
             neg_hess.diag() += 1e-4 * arma::abs(neg_hess.diag()).max();
             solve_ok = arma::solve(delta, neg_hess, grad);
         }
-        if (!solve_ok) break;  // singular — return what we have
+        if (!solve_ok) break;  // singular, return what we have
 
         beta += delta;
     }

@@ -70,7 +70,7 @@ summary.fastclogit <- function(object, robust = TRUE, ...) {
   # column by position (the last one), not by name. Appending the confidence
   # interval after `p` made printCoefmat hand the 97.5% bound to symnum(),
   # which errors with "'x' must be between 0 and 1" for any fit whose upper
-  # bound falls outside [0, 1] — and, worse, prints silently wrong
+  # bound falls outside [0, 1], and, worse, prints silently wrong
   # significance stars for any fit where it happens not to. Reported by Ben
   # 2026-09-22. The CI is kept in a separate element for tidy_fastclogit()
   # and for callers who want it.

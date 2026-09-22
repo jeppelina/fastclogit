@@ -1,4 +1,4 @@
-# test-reported-bugs.R — regressions for bugs reported from outside.
+# test-reported-bugs.R: regressions for bugs reported from outside.
 #
 # Reported by Ben, 2026-09-22, against v0.3.0 from GitHub.
 
@@ -26,7 +26,7 @@ make_saturated_am <- function(n_sets = 200, n_alts = 20, A = 4, B = 4, seed = 1)
 test_that("summary() prints when CI bounds fall outside [0, 1]", {
   # printCoefmat() takes the LAST column of the table as the p-value. The
   # confidence interval used to be appended after it, so symnum() was handed
-  # the 97.5% bound and errored with "'x' must be between 0 and 1" — or, when
+  # the 97.5% bound and errored with "'x' must be between 0 and 1", or, when
   # the bounds happened to lie inside [0, 1], printed wrong stars in silence.
   d <- make_saturated_am()
   fit <- fclogit(matched ~ group_man + group_woman:group_man,
@@ -52,9 +52,11 @@ test_that("a saturated a*b model with an ego-side factor does not error", {
   # fallback on the final vcov, inv_sympd() threw and the whole fit was lost
   # even though every identified coefficient was already correct.
   d <- make_saturated_am()
-  fit <- expect_no_error(
-    fclogit(matched ~ group_woman * group_man, data = d, strata = "id_woman")
-  )
+  fit <- NULL
+  expect_warning(
+    fit <- fclogit(matched ~ group_woman * group_man, data = d,
+                   strata = "id_woman"),
+    "not identified in conditional logit")
   expect_true(fit$converged)
 })
 
@@ -64,8 +66,8 @@ test_that("identified coefficients match clogit exactly in the saturated model",
 
   sv <- survival::clogit(matched ~ group_woman * group_man +
                            survival::strata(id_woman), data = d)
-  fit <- fclogit(matched ~ group_woman * group_man, data = d,
-                 strata = "id_woman")
+  fit <- suppressWarnings(
+    fclogit(matched ~ group_woman * group_man, data = d, strata = "id_woman"))
 
   sv_coef <- coef(sv)
   identified <- names(sv_coef)[!is.na(sv_coef)]
@@ -75,13 +77,12 @@ test_that("identified coefficients match clogit exactly in the saturated model",
   expect_equal(unname(coef(fit)[common]), unname(sv_coef[common]),
                tolerance = 1e-6)
 
-  # KNOWN LIMITATION, asserted so a future fix trips this test deliberately
-  # rather than by accident. The terms clogit reports as NA are returned here
-  # as ridge-determined values with meaningless SEs. See
-  # Research/FASTCLOGIT_MERGE_MAP.md section 5a. When within-strata dropping
-  # lands, this expectation should flip to expecting them absent or NA.
+  # The terms clogit reports as NA must not be fitted here either. They are
+  # dropped, named in the warning, and listed on the fit. Before v0.5.0 they
+  # came back as ridge-determined values with meaningless standard errors and
+  # no warning of any kind.
   aliased <- names(sv_coef)[is.na(sv_coef)]
-  aliased_here <- intersect(aliased, names(coef(fit)))
-  expect_gt(length(aliased_here), 0L)
-  expect_false(any(is.na(coef(fit)[aliased_here])))
+  expect_gt(length(aliased), 0L)
+  expect_false(any(aliased %in% names(coef(fit))))
+  expect_setequal(fit$dropped_unidentified, aliased)
 })

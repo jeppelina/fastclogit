@@ -105,7 +105,7 @@ cluster-robust inference, the KHB decomposition and nine assumption violations.
   columns to drop by running QR on a 50,000-row subsample; a dummy whose few 1s
   all fell outside it looked like a zero column and was silently removed. At
   200,000 rows a dummy with four 1s was dropped in **40% of runs**, one with
-  eight in 4% — precisely the rare-cell regime these models exist for. Columns
+  eight in 4%, precisely the rare-cell regime these models exist for. Columns
   with low support in the subsample now have their non-zero rows forced in
   before the QR. Measured drop rate afterwards: 0% at every support level
   tested.
@@ -176,16 +176,38 @@ KHB decomposition recovers a known mediation structure.
   a gradient nowhere near 1e-08 of it, and the plateau rule's other conditions
   are untouched.
 
-## Known limitations
+## Two limitations fixed rather than documented
 
-* A covariate constant **within** every stratum but varying across strata (an
-  ego-side covariate in a one-sided choice model) is not identified in
-  conditional logit, but passes the zero-variance screen, which uses global
-  variance. `survival::clogit` returns NA for such terms; this package returns
-  a ridge-determined value with a meaningless standard error, and
-  `$vcov_singular` does **not** flag it, because the ridge rescues the
-  inversion before it can. Drop such columns before fitting. See
-  the "Limitations" section of the README.
+* **Stratum-constant covariates are now detected and dropped.** A covariate
+  that never varies inside a choice set cancels in the conditional likelihood
+  and is not identified. `survival::clogit` returns NA for such terms. This
+  package used to fit them anyway, returning a ridge-determined value with a
+  meaningless standard error and no warning: `$vcov_singular` never caught
+  them either, because the ridge rescues the matrix inversion before that flag
+  can fire.
+
+  They are now detected, named in a warning, dropped from the fit, and listed
+  in `$dropped_unidentified`. The check exits as soon as any stratum shows
+  variation, so for a well-specified model it costs one stratum per column.
+
+  This is the second half of the bug Ben Jarvis reported: a saturated
+  `a * b` model with a chooser-level factor now fits and returns exactly the
+  identified coefficients, matching `clogit`.
+
+* **A flat optimum reached at the iteration cap is no longer a failure.**
+  `tol` applies to `max|gradient|`, and how small that can be computed to be
+  depends on the problem. Ask for more precision than the arithmetic has and
+  the optimiser keeps stepping long after it has arrived: at 10,000 strata
+  with `tol = 1e-14`, a fit ran all 200 iterations and finished at
+  `max|grad| = 3.8e-13`, reported as `iter_max`.
+
+  The in-loop plateau rule cannot catch this, because it requires evidence
+  that the optimiser is struggling (step-halving, or a tiny step) and a
+  cleanly converged fit never produces any. A terminal check now looks at the
+  flatness of the log-likelihood and the final gradient directly, and reports
+  `flat_optimum`.
+
+## Known limitations
 
 * The dense/sparse divergence observed in production at n=100 (dense converging to
   a log-likelihood 271 units below sparse and `survival`, never reproduced
@@ -200,7 +222,7 @@ KHB decomposition recovers a known mediation structure.
   AND prev_unhalved_step_norm < tol * 1e3`. The grad threshold of `tol * 1e4`
   was too generous for very large fits: at Paper-3 Step 4 scale
   (n=70M rows, p=128, 718k strata) the optimizer reached `max|grad| ~ 5e-6`
-  at iteration 7 — well within `tol * 1e4 = 1e-2` — and stopped, even though
+  at iteration 7, well within `tol * 1e4 = 1e-2`, and stopped, even though
   rare-cell interactions (Asia × decade2010) were still ~1 log-OR off the
   MLE. Tightening the threshold to `tol * 10` keeps secondary as a safety
   net for genuine stalls while requiring the gradient to be near primary
@@ -243,13 +265,13 @@ KHB decomposition recovers a known mediation structure.
   in `load_fastclogit.R`. R's `make` pipeline then parsed any `$` inside
   the path as a make-variable reference and expanded it to empty,
   rewriting paths like `\\server\projekt\PROJID$\subdir\` into
-  `\\server\projekt\PROJIDsubdir\` — the compiler then "couldn't find"
+  `\\server\projekt\PROJIDsubdir\`, the compiler then "couldn't find"
   the header in a non-existent directory.
 * **Fix:** inline the CsrMatrix struct directly into the MONA copy of
   `clogit_newton_sparse.cpp`. The MONA bundle is now fully self-contained
-  — no `csr_matrix.h` file required, no `PKG_CPPFLAGS` manipulation
+, no `csr_matrix.h` file required, no `PKG_CPPFLAGS` manipulation
   needed. Delete any old `csr_matrix.h` from your MONA directory.
-* The package build (R CMD INSTALL) still uses `src/csr_matrix.h` —
+* The package build (R CMD INSTALL) still uses `src/csr_matrix.h`,
   unchanged from v0.4.0.
 
 # fastclogit 0.4.0
@@ -274,7 +296,7 @@ KHB decomposition recovers a known mediation structure.
   convergence criterion (`rel-ll change + small gradient`) was misfiring on
   fits with rare cells whose Hessian directions stalled under step-halving.
   Added a third check on the unhalved Newton step magnitude
-  (`prev_newton_step_norm < tol * 1e3`) — this distinguishes "at the MLE"
+  (`prev_newton_step_norm < tol * 1e3`), this distinguishes "at the MLE"
   from "step-halving has been killing our steps." Both dense and sparse
   kernels now share the patched criterion. Fixes a production case that
   silently converged at iter 7 with interaction params essentially at zero.
@@ -306,7 +328,7 @@ vs ~95 min on dense, and peak RAM ~30 GB vs ~225 GB.
 * Step-halving caches `X * delta` once per Newton step so each halving
   is an O(n) vector update instead of a full O(nnz) matvec.
 * Per-iteration workspaces (H1, H2, xbar, nz_xbar) moved out of the
-  inner loop — single allocation per fit, reused across iterations and
+  inner loop, single allocation per fit, reused across iterations and
   strata.
 * New validation harness in `tests/sparse_validation/`: simulation
   generators (small dense, medium factor, paper-3-like 1M×92, edge

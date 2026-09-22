@@ -1,4 +1,4 @@
-# test-dense-sparse-consistency.R — Tier 2 of the test plan.
+# test-dense-sparse-consistency.R: Tier 2 of the test plan.
 #
 # Both paths computed FRESH in the same run and compared to each other. No
 # cached reference, so nothing here can go stale.

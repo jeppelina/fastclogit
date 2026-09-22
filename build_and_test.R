@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # ============================================================================
-# build_and_test.R — Build fastclogit and run validation tests
+# build_and_test.R: Build fastclogit and run validation tests
 #
 # Run from the fastclogit/ directory:
 #   Rscript build_and_test.R
@@ -14,7 +14,7 @@
 timestamp_str <- format(Sys.time(), "%Y%m%d_%H%M%S")
 log_file <- file.path(getwd(), paste0("build_and_test_", timestamp_str, ".log"))
 
-# Open log connection — tee to both console and file
+# Open log connection, tee to both console and file
 log_con <- file(log_file, open = "wt")
 sink(log_con, type = "output", split = TRUE)  # split = TRUE → console + file
 sink(log_con, type = "message")                # capture warnings/errors too
@@ -237,7 +237,7 @@ n_within   <- sum(comparison$within_3se, na.rm = TRUE)
 n_missing  <- sum(is.na(comparison$est))
 recovery_pass <- n_missing == 0 && all(comparison$within_3se, na.rm = TRUE)
 cat("\n  Matched:", n_matched, "/", nrow(comparison), "coefficients")
-if (n_missing > 0) cat(" (", n_missing, " name mismatches — check beta_true names)")
+if (n_missing > 0) cat(" (", n_missing, " name mismatches, check beta_true names)")
 cat("\n  All within 3 SEs?", recovery_pass, "\n\n")
 
 # --- 6. Memory benchmark ---

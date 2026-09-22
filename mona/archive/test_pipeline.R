@@ -1,5 +1,5 @@
 ###############################################################################
-#### test_pipeline.R — Validation suite for run_fastclogit_models.R pipeline
+#### test_pipeline.R, Validation suite for run_fastclogit_models.R pipeline
 ####
 #### Validates all key components against survival::clogit on simulated data:
 ####   1. Column-by-column design matrix builder matches model.matrix()
@@ -147,7 +147,7 @@ mm_formula <- ~ Edudiff3 + AgeDiffcat + SameMicroAnc + MesoNotMicro +
 X_mm <- model.matrix(mm_formula, data = dt_test)
 X_manual <- build_design_matrix(dt_test, fml)
 
-# Compare — names may differ slightly, so match by content
+# Compare, names may differ slightly, so match by content
 cat("  model.matrix cols:", ncol(X_mm), "| manual cols:", ncol(X_manual), "\n")
 cat("  model.matrix colnames:\n    ", paste(colnames(X_mm), collapse = ", "), "\n")
 cat("  manual colnames:\n    ", paste(colnames(X_manual), collapse = ", "), "\n")
@@ -294,7 +294,7 @@ cat("  fastclogit time:", round(t_fast[3], 2), "s\n")
 beta_clogit <- coef(fit_clogit)
 beta_fast <- fit_fast$coefficients
 
-# Match by name — names from manual builder differ slightly from clogit's model.matrix
+# Match by name, names from manual builder differ slightly from clogit's model.matrix
 # Use content matching as fallback
 cat("\n  Coefficient comparison:\n")
 cat(sprintf("  %-30s %12s %12s %12s\n", "Term", "clogit", "fastclogit", "diff"))
@@ -317,7 +317,7 @@ for (i in seq_along(beta_fast)) {
     cat(sprintf("  %-30s %12.6f %12.6f %12.2e\n",
                 fn, beta_clogit[cn_match], beta_fast[i], d))
   } else {
-    cat(sprintf("  %-30s %12s %12.6f %12s\n", fn, "NO MATCH", beta_fast[i], "—"))
+    cat(sprintf("  %-30s %12s %12.6f %12s\n", fn, "NO MATCH", beta_fast[i], "-"))
   }
 }
 
@@ -386,7 +386,7 @@ if (qr_c$rank < ncol(X_with_redund)) {
   cat("  Total terms (estimated + dropped):", nrow(td) + nrow(fit_clean$dropped_terms), "\n")
   cat("  Test 4: PASS\n\n")
 } else {
-  cat("  QR did not detect redundancy — FAIL\n\n")
+  cat("  QR did not detect redundancy, FAIL\n\n")
 }
 
 

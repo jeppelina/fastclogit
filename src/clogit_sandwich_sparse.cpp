@@ -1,4 +1,4 @@
-// clogit_sandwich_sparse.cpp — Clustered sandwich variance, sparse-X version.
+// clogit_sandwich_sparse.cpp: Clustered sandwich variance, sparse-X version.
 //
 // Mirrors clogit_sandwich.cpp exactly: same math, same small-sample correction,
 // same Rcpp::List return shape. Only the design-matrix walk changes to use
@@ -8,7 +8,7 @@
 // Author: Jesper Lindmarker
 // License: MIT
 
-// Required for Paper-3-scale fits — see header comment in
+// Required for Paper-3-scale fits, see header comment in
 // clogit_newton_sparse.cpp. Both sparse translation units MUST share
 // this define or arma::sp_mat layouts diverge.
 #define ARMA_64BIT_WORD 1
@@ -113,7 +113,7 @@ Rcpp::List clogit_sandwich_sparse_cpp(
         for (int idx : nz_xbar) xbar_k(idx) = 0.0;
     }
 
-    // Meat: B = U * U.t() — dense p x p, identical math to dense sandwich
+    // Meat: B = U * U.t(), dense p x p, identical math to dense sandwich
     arma::mat B = U * U.t();
 
     // Small-sample correction: C/(C-1) * (G-1)/G  (matches dense kernel exactly)

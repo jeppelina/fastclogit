@@ -9,23 +9,37 @@ converged rather than just whether it did.
 Built for problems with tens of millions of rows, hundreds of thousands of
 choice sets, and designs that are mostly factor dummies.
 
-## When to use it, and when not to
+## What it buys you
 
-**Use `survival::clogit()`** when your data fits comfortably in memory. It is
-the reference implementation, it is battle-tested, and this package validates
-against it. Below roughly a million rows there is no reason to reach for
-anything else.
+The main advantage is time and memory. It comes from two places: the design
+matrix is never duplicated through `model.frame`/`model.matrix`, and a sparse
+kernel walks factor-heavy designs by their non-zeros rather than their cells.
 
-**Use `fastclogit`** when `clogit()` runs out of memory or time. The gain comes
-from never materialising `model.frame`/`model.matrix` copies, and from a sparse
-path that exploits factor-heavy designs. At 1M rows and 90 columns it is 35x
-faster than the dense path and uses a fifth of the memory; on one production
-workload the difference was 95 minutes versus 80 seconds, and 225 GB versus
-30 GB.
+**The win is large when the design is wide and mostly dummies.** At 1,000,000
+rows and 90 columns the sparse path fits in 0.6 seconds and 0.6 GB, against
+45 seconds and 4.0 GB for `survival::clogit`. The ratio grows with the column
+count, because dense cost scales with rows times columns while sparse scales
+with non-zeros. On a 37M by 128 production workload at about 5% density the
+difference was 80 seconds against 95 minutes and 30 GB against 225 GB, which
+decides whether the model runs at all.
 
-**Do not use either** for two-sided matching questions without knowing what a
-one-sided conditional logit does and does not identify. That is a modelling
-matter, not a software one.
+**The win is small when the design is narrow, or the predictors are
+continuous.** At 100,000 rows and 20 columns every engine here finishes inside
+about a second. Sparse storage adds a CSR build and compresses nothing when the
+predictors are dense, so the sparse path is roughly even with the dense one.
+If `clogit()` finishes on your data, speed alone is not a reason to switch.
+
+The second advantage is that a fit reports how it converged, not just whether
+it did. `$convergence_criterion` distinguishes six outcomes and `$iter_log`
+gives the full per-iteration trace. That is of little interest at 2,000 rows,
+where you can eyeball the result. It matters at 37 million, where you cannot:
+two optimiser defects in this package's own history produced output that looked
+exactly like a successful fit, and the reporting added in v0.5.0 is what makes
+that case visible. See `vignette("convergence-and-diagnostics")`.
+
+One modelling caveat, unrelated to either: a one-sided conditional logit does
+not identify a two-sided matching process. That constrains what any of these
+engines can tell you, this one included.
 
 ## Installation
 
@@ -37,7 +51,7 @@ Requires a working Rcpp toolchain. On restricted or offline servers where
 packages cannot be installed, use the source-able bundle in `mona/`:
 copy the folder across and `source("load_fastclogit.R")`. See
 `mona/README_MONA.md`, and note that `mona/` is generated from `src/` by
-`tools/make_mona_bundle.R` — edit `src/`, not `mona/`.
+`tools/make_mona_bundle.R`, edit `src/`, not `mona/`.
 
 ## Quick start
 
@@ -58,17 +72,31 @@ summary(fit)
 tidy_fastclogit(fit)          # broom-style data frame
 ```
 
-For a design that is mostly factor dummies, build `X` sparse and skip the
-formula interface entirely:
+`fclogit()` builds the design matrix densely. Once a model is mostly factor
+dummies that becomes the expensive part, so build the matrix sparsely yourself
+and pass it to `fastclogit()`:
 
 ```r
 library(Matrix)
-X <- sparse.model.matrix(~ pair_type * decade + edu * decade, data = d)[, -1]
-fit <- fastclogit(X, d$choice, d$couple_id, offset = d$correction,
-                  cluster = d$ego_id)
+
+# Same data and same model as above, but the design matrix is never dense.
+X <- sparse.model.matrix(~ x1 + f1 + f2, data = sim$data)
+X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+
+fit_sparse <- fastclogit(
+  X,
+  choice  = sim$data$choice,
+  strata  = sim$data$strata_id,
+  cluster = sim$data$cluster_id,
+  offset  = sim$data$correction
+)
+
+max(abs(coef(fit_sparse) - coef(fit)))   # same answer, to machine epsilon
 ```
 
-The sparse kernel is dispatched automatically on any `Matrix::sparseMatrix`.
+Passing any `Matrix::sparseMatrix` selects the sparse kernel; nothing else
+changes. Drop the intercept column but keep every factor's reference level:
+see "Identification" in `vignette("large-scale")` for why.
 
 ## Knowing whether your fit worked
 
@@ -96,12 +124,17 @@ wrong instrument for this). Reproduce with
 
 | rows | cols | dense | sparse | `survival::clogit` |
 |---|---|---|---|---|
-| 100,000 | 20 | 0.33 s / 0.30 GB | **0.05 s / 0.25 GB** | 1.06 s / 0.40 GB |
-| 500,000 | 50 | 4.32 s / 1.24 GB | **0.26 s / 0.41 GB** | — |
-| 1,000,000 | 90 | 21.34 s / 2.91 GB | **0.60 s / 0.64 GB** | — |
+| 100,000 | 20 | 0.32 s / 0.31 GB | **0.05 s / 0.26 GB** | 1.09 s / 0.43 GB |
+| 500,000 | 50 | 4.11 s / 1.30 GB | **0.26 s / 0.43 GB** | 11.21 s / 2.15 GB |
+| 1,000,000 | 90 | 31.82 s / 3.07 GB | **0.62 s / 0.62 GB** | 45.23 s / 4.01 GB |
 
 All three engines reach the same log-likelihood to a relative spread of exactly
 zero.
+
+`survival::clogit` copes with all three of these. It is slower and wants more
+memory, but it works, and at these sizes that matters more than the ratio: use
+it unless you have a reason not to. The gap only becomes decisive further up,
+where `clogit` stops fitting at all.
 
 Figures from a production deployment, quoted separately because you cannot
 reproduce them from this repo: 37M rows by 128 columns at ~5% density, ~225 GB
@@ -112,23 +145,11 @@ to ~30 GB peak memory, ~95 minutes to ~80 seconds.
 `inst/validation/` holds simulation studies with pre-specified decision rules,
 covering parameter recovery, SE calibration, interval coverage, the sampling
 correction, cluster-robust inference and nine assumption violations. 35 of 36 checks pass; the one failure is a documented open finding.
-`inst/validation/README.md` reports the numbers, what the studies found, and —
-importantly — two simulation designs that were wrong and one hypothesis they
+`inst/validation/README.md` reports the numbers, what the studies found, and,
+importantly, two simulation designs that were wrong and one hypothesis they
 refuted.
 
 ## Limitations
-
-**Stratum-constant covariates are not identified, and we do not tell you.** A
-covariate constant within every choice set but varying across them (a
-chooser-level covariate) drops out of the conditional likelihood.
-`survival::clogit` returns `NA` for such terms. This package returns a
-ridge-determined value with a meaningless standard error, and `$vcov_singular`
-does **not** flag it, because the ridge rescues the matrix inversion before the
-flag can fire. Drop such columns yourself.
-
-**`tol` below the attainable numerical floor reports failure.** A fit can end at
-`max|grad| = 3.8e-13` and still be labelled `iter_max` if you asked for 1e-14.
-The warning now says so. Relax `tol`.
 
 **The dense path has an unexplained divergence at large choice-set sizes.** On
 real data at 100 alternatives per set, the dense kernel has been observed
@@ -142,12 +163,12 @@ clusters raises a warning rather than being accepted silently.
 
 ## Documentation
 
-- `vignette("getting-started")` — the tour
-- `vignette("convergence-and-diagnostics")` — reading `$iter_log`, and what each
+- `vignette("getting-started")`: the tour
+- `vignette("convergence-and-diagnostics")`: reading `$iter_log`, and what each
   convergence route means
-- `vignette("large-scale")` — sparse designs, memory, and restricted servers
-- `?fastclogit`, `?fclogit` — full options reference
-- `NEWS.md` — what changed and why
+- `vignette("large-scale")`: sparse designs, memory, and restricted servers
+- `?fastclogit`, `?fclogit`, full options reference
+- `NEWS.md`: what changed and why
 
 ## License
 

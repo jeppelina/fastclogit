@@ -1,7 +1,7 @@
-// GENERATED FROM src/clogit_sandwich_sparse.cpp by tools/make_mona_bundle.R — DO NOT EDIT.
+// GENERATED FROM src/clogit_sandwich_sparse.cpp by tools/make_mona_bundle.R, DO NOT EDIT.
 // Edit the src/ copy and re-run the generator.
 
-// clogit_sandwich_sparse.cpp — Clustered sandwich variance, sparse-X version.
+// clogit_sandwich_sparse.cpp: Clustered sandwich variance, sparse-X version.
 //
 // Mirrors clogit_sandwich.cpp exactly: same math, same small-sample correction,
 // same Rcpp::List return shape. Only the design-matrix walk changes to use
@@ -11,7 +11,7 @@
 // Author: Jesper Lindmarker
 // License: MIT
 
-// Required for Paper-3-scale fits — see header comment in
+// Required for Paper-3-scale fits, see header comment in
 // clogit_newton_sparse.cpp. Both sparse translation units MUST share
 // this define or arma::sp_mat layouts diverge.
 #define ARMA_64BIT_WORD 1
@@ -21,7 +21,7 @@
 // ---- BEGIN generated from src/csr_matrix.h (do not edit here) --------
 // Inlined so Rcpp::sourceCpp() needs no header on the include path.
 // Edit src/csr_matrix.h and re-run tools/make_mona_bundle.R instead.
-// csr_matrix.h — Row-major (CSR) view of an arma::sp_mat (CSC), shared by
+// csr_matrix.h: Row-major (CSR) view of an arma::sp_mat (CSC), shared by
 // the sparse Newton kernel and the sparse cluster-sandwich. Build O(nnz).
 //
 // Used by clogit_newton_sparse.cpp + clogit_sandwich_sparse.cpp. Keep this
@@ -59,7 +59,7 @@ struct CsrMatrix {
         n_cols = static_cast<int>(X.n_cols);
 
         // Pass 1: count nnz per row by column-walking (faster than the
-        // general iterator — cache-friendly CSC traversal).
+        // general iterator, cache-friendly CSC traversal).
         std::vector<int> row_nnz(n_rows, 0);
         for (int j = 0; j < n_cols; ++j) {
             for (arma::sp_mat::const_col_iterator it = X.begin_col(j);
@@ -189,7 +189,7 @@ Rcpp::List clogit_sandwich_sparse_cpp(
         for (int idx : nz_xbar) xbar_k(idx) = 0.0;
     }
 
-    // Meat: B = U * U.t() — dense p x p, identical math to dense sandwich
+    // Meat: B = U * U.t(), dense p x p, identical math to dense sandwich
     arma::mat B = U * U.t();
 
     // Small-sample correction: C/(C-1) * (G-1)/G  (matches dense kernel exactly)

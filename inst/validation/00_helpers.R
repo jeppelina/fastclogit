@@ -1,5 +1,5 @@
 # =============================================================================
-# 00_helpers.R — shared machinery for the validation studies.
+# 00_helpers.R: shared machinery for the validation studies.
 #
 # Every study states its decision rule BEFORE it runs, as a call to
 # vc_check(). The rules live in the scripts, in git, so the plan is its own

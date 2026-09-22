@@ -1,5 +1,5 @@
 # =============================================================================
-# 07_bench_worker.R — ONE fit, in its own process, so peak RSS is attributable.
+# 07_bench_worker.R: ONE fit, in its own process, so peak RSS is attributable.
 #
 # Run via: /usr/bin/time -l Rscript 07_bench_worker.R <engine> <n_sets> <n_alts> <p_fac>
 # where engine is one of: dense, sparse, survival
