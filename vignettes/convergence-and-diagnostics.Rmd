@@ -1,0 +1,149 @@
+---
+title: "Convergence and diagnostics"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Convergence and diagnostics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(fastclogit)
+set.seed(1)
+```
+
+At a few thousand rows, a conditional logit either converges or it does not,
+and you rarely think about it. At tens of millions of rows with a sampling
+offset and rare cells, "converged" stops being a yes or no and becomes a
+question about *how*. This vignette is about answering that question.
+
+It exists because getting it wrong has been expensive here. Two defects in this
+package's line search went unnoticed for months: one let the optimiser accept a
+wildly oversized first step and wander into a region where the softmax
+saturates and the gradient freezes; the other accepted steps that improved
+nothing, so a fit walked downhill for ninety iterations at seventy seconds
+each. Both produced output that looked like a fit.
+
+## The three things every fit reports
+
+```{r}
+sim <- simulate_clogit_data(n_egos = 2000, n_alts = 20, seed = 42)
+fit <- fastclogit(sim$X, sim$choice, sim$strata, offset = sim$offset)
+
+fit$convergence_criterion
+fit$convergence_message
+```
+
+And the full trace, one row per Newton iteration:
+
+```{r}
+fit$iter_log
+```
+
+`step_size` and `halving_count` describe the step that *produced* the beta
+evaluated on that row, so they are `NA` on iteration 1. `tier_fired` records
+which convergence test passed, if any.
+
+## The six routes, and what each one means
+
+| `convergence_criterion` | Converged? | What it means |
+|---|---|---|
+| `primary` | yes | `max\|gradient\| < tol`. Unambiguous. |
+| `secondary` | yes | Relative log-likelihood change, gradient, and the unhalved Newton step are all tight together. |
+| `plateau` | yes, conditionally | The log-likelihood is flat over several iterations, the gradient is below `tier3_grad_floor`, and the optimiser shows evidence of struggling. |
+| `flat_optimum` | yes | No step improves the log-likelihood and the gradient is already small. That is what being at a maximum means. |
+| `iter_max` | **no** | Hit `max_iter`. |
+| `line_search` | **no** | No step improves the log-likelihood *and* the gradient is still large. The Newton direction has stopped being an ascent direction. |
+
+### Why `plateau` needs side-conditions
+
+`plateau` matches `survival::clogit`'s relative-log-likelihood criterion
+(`1e-9`). On its own that is too permissive: a badly stuck optimiser also stops
+moving. So tier-3 additionally requires the change to persist over
+`tier3_plateau_iters` consecutive iterations, the gradient to be below
+`tier3_grad_floor`, and the previous iteration to show either step-halving or a
+very small step.
+
+That last condition matters more than it looks. It is evidence the optimiser is
+on a genuinely flat ridge rather than simply finished — and a bug in the line
+search can *manufacture* it. Treat a `plateau` fit as a fit worth a second
+look, not as a failure.
+
+### `flat_optimum` versus `line_search`
+
+These two look identical from inside the loop: no step improves the
+log-likelihood. The gradient distinguishes them, and getting that wrong was a
+real incident. An early version of the guard treated every such case as a
+failure, which relabelled finished fits as `FAILED` and silently skipped a
+men's KHB decomposition. The rule now splits on `tier3_grad_floor`, the same
+threshold the plateau rule uses, so the two agree by construction.
+
+## Reading a trace that went wrong
+
+Four signatures are worth recognising.
+
+**The log-likelihood jumps by orders of magnitude between iterations 1 and 2.**
+The opening step was far too long. With the line search running on every
+iteration this should no longer happen, but if you see it, stop and look at
+your offset's within-stratum spread.
+
+**`grad_max` is frozen at the same large value for many iterations.** The
+softmax has saturated; the observed information has collapsed toward zero.
+Nothing after that point recovers, and the fit should be discarded rather than
+given more iterations.
+
+**`halving_count` sits at 20 every iteration.** Either the direction is bad, or
+the acceptance test is comparing rounding noise — which happens once
+`|loglik|` is large enough that `1e-10` falls below one unit in the last place.
+The kernel now scales that tolerance with `|loglik|`.
+
+**The log-likelihood decreases slowly and monotonically.** This is the second
+historic defect. It cannot happen now: a step that does not improve is refused.
+`inst/validation` asserts this directly.
+
+## "Did not converge" at a tiny gradient
+
+A fit can hit `max_iter` with a gradient far below anything you would call
+unconverged:
+
+```{r}
+small <- simulate_clogit_data(n_egos = 1000, n_alts = 10,
+                              use_offset = FALSE, seed = 7)
+tight <- fastclogit(small$X, small$choice, small$strata,
+                    tol = 1e-14, max_iter = 60L)
+tight$convergence_criterion
+max(abs(tight$gradient))
+```
+
+`tol` applies to `max|gradient|`, which is a sum over strata, so how small it
+can be *computed* to be depends on the problem. Ask for 1e-14 and the optimiser
+will keep trying to reach it long after it has arrived. The warning says so
+explicitly. Relax `tol`; do not raise `max_iter`.
+
+## The knobs
+
+You will rarely touch these, and the defaults are what the papers run.
+
+| Argument | Default | Change it when |
+|---|---|---|
+| `tol` | `1e-6` | The fit reports `iter_max` at a gradient you consider small. Relax it. |
+| `max_iter` | `25` | A genuinely hard problem is still improving at the cap. Check `iter_log` first: if the log-likelihood is flat, more iterations will not help. |
+| `tier3_enable` | `TRUE` | You want strictly gradient-based convergence, e.g. to reproduce pre-2026-06-17 behaviour. |
+| `tier3_plateau_tol` | `1e-9` | Almost never. It matches `survival`'s `eps`; the extra strictness comes from the side-conditions, not from tightening this. |
+| `tier3_plateau_iters` | `3` | You want more consecutive flat iterations before accepting a plateau. |
+| `tier3_grad_floor` | `1e-2` | You want to refuse plateau convergence unless the gradient is smaller. Also governs `flat_optimum`. |
+| `tier3_halving_floor`, `tier3_step_floor` | `2`, `1e-3` | Almost never. They define "the optimiser is struggling". |
+
+## A checklist for a production fit
+
+1. `fit$convergence_criterion` is `primary` or `flat_optimum` → done.
+2. `secondary` → check `max(abs(fit$gradient))` is near `tol`.
+3. `plateau` → look at `fit$iter_log`. Is the log-likelihood genuinely flat
+   over the last few iterations, and is the gradient small in absolute terms?
+4. `iter_max` → is the gradient already tiny? Then relax `tol`. Otherwise look
+   for a saturated softmax.
+5. `line_search` → do not use this fit.
+6. Check `fit$vcov_singular`. If `TRUE`, some SEs rest on a ridge rather than
+   on the data. Note that it does **not** fire for stratum-constant columns,
+   which are a separate problem — see `?fastclogit`.

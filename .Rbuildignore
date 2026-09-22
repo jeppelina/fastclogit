@@ -1,0 +1,18 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.git$
+^\.gitignore$
+^\.DS_Store$
+# Toolchain installer kept locally for MONA deployment; 287 MB, not package content.
+^gfortran-.*\.pkg$
+# Build and run logs
+^build_and_test.*\.log$
+^build_and_test\.R$
+^.*\.Rout$
+^bench/.*\.log$
+# Manual validation harness fixtures: ~50 MB of cached fits that
+# tests/sparse_validation/reference_fits.R regenerates deterministically.
+# The scripts ship; the binaries do not.
+^tests/sparse_validation/reference$
+# Planning notes, not user documentation
+^notes$

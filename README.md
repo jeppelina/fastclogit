@@ -1,186 +1,155 @@
 # fastclogit
 
-> **Identification caveat.** A covariate that is constant *within* every
-> stratum but varies across them (an ego-side covariate in a one-sided choice
-> model) is not identified in conditional logit. The zero-variance screen uses
-> global variance, so such a column passes it: `survival::clogit` returns NA
-> for these terms, `fastclogit` returns a ridge-determined value with a
-> meaningless standard error, and `$vcov_singular` does not flag it. Drop them
-> before fitting. Tracked in `../FASTCLOGIT_MERGE_MAP.md`.
+Conditional logit for discrete choice data that is too large for
+`survival::clogit()`. Built on Rcpp/RcppArmadillo, with a sparse execution path
+for factor-heavy designs, McFadden/Manski sampling-correction offsets,
+cluster-robust standard errors, and a Newton optimiser that tells you **how** it
+converged rather than just whether it did.
 
-Memory-efficient conditional logit estimation for large-scale discrete choice data. Built on Rcpp/RcppArmadillo with a Newton-Raphson optimizer designed to handle datasets with millions to hundreds of millions of rows — where `survival::clogit()` runs out of memory.
+Written for Swedish register data on partner choice: tens of millions of rows,
+hundreds of thousands of choice sets, designs that are mostly factor dummies.
+
+## When to use it, and when not to
+
+**Use `survival::clogit()`** when your data fits comfortably in memory. It is
+the reference implementation, it is battle-tested, and this package validates
+against it. Below roughly a million rows there is no reason to reach for
+anything else.
+
+**Use `fastclogit`** when `clogit()` runs out of memory or time. The gain comes
+from never materialising `model.frame`/`model.matrix` copies, and from a sparse
+path that exploits factor-heavy designs. At 1M rows and 90 columns it is 35x
+faster than the dense path and uses a fifth of the memory; at production scale
+in Paper 3 the difference was 95 minutes versus 80 seconds, and 225 GB versus
+30 GB.
+
+**Do not use either** for two-sided matching questions without knowing what a
+one-sided conditional logit does and does not identify. That is a modelling
+matter, not a software one.
 
 ## Installation
 
 ```r
-# Install from GitHub (requires Rcpp toolchain)
 remotes::install_github("jeppelina/fastclogit")
-
-# Or install from local source
-devtools::install("/path/to/fastclogit")
 ```
 
-### MONA / restricted environments
-
-If you cannot install R packages (e.g., on SCB's MONA servers), use the source-able files in `mona/`. Copy the folder to MONA and run:
-
-```r
-source("load_fastclogit.R")
-```
-
-See `mona/README_MONA.md` for full instructions.
+Requires a working Rcpp toolchain. On restricted servers where packages cannot
+be installed (SCB's MONA, for instance), use the source-able bundle in `mona/`:
+copy the folder across and `source("load_fastclogit.R")`. See
+`mona/README_MONA.md`, and note that `mona/` is generated from `src/` by
+`tools/make_mona_bundle.R` — edit `src/`, not `mona/`.
 
 ## Quick start
 
 ```r
 library(fastclogit)
 
-# Simulate partner-choice data (500 egos x 30 alternatives)
-sim <- simulate_clogit_data(n_egos = 500, n_alts = 30)
+sim <- simulate_clogit_data(n_egos = 5000, n_alts = 30)
 
-# Fit using the formula interface
-fit <- fclogit(choice ~ lnDist + n_years_same_cfar + n_years_same_peorg,
-               data = sim$data,
-               strata = "strata_id",
-               cluster = "cluster_id",
-               offset = "correction")
-summary(fit)
-```
-
-### Formula interface (`fclogit`)
-
-The recommended entry point. Accepts a standard R formula, expands factors to dummies automatically, detects and drops zero-variance and collinear columns, and handles NAs.
-
-```r
 fit <- fclogit(
-  choice ~ age_diff + edu_level + distance + edu_level:distance,
-  data    = my_data,
-  strata  = "choice_set_id",
-  cluster = "person_id",        # optional: clustered sandwich SEs
-  offset  = "sampling_weight"   # optional: McFadden/Manski correction
+  choice ~ lnDist + n_years_same_cfar + Edudiff3,
+  data    = sim$data,
+  strata  = "strata_id",
+  cluster = "cluster_id",     # cluster-robust SEs
+  offset  = "correction"      # McFadden/Manski correction
 )
 
-summary(fit)              # coefficient table with robust SEs
-tidy_fastclogit(fit)      # broom-style data.frame
-confint(fit)              # confidence intervals
+summary(fit)
+tidy_fastclogit(fit)          # broom-style data frame
 ```
 
-### Matrix interface (`fastclogit`)
-
-For when you want full control over the design matrix (e.g., custom dummy coding or pre-scaled variables):
+For a design that is mostly factor dummies, build `X` sparse and skip the
+formula interface entirely:
 
 ```r
-fit <- fastclogit(
-  X       = design_matrix,   # numeric matrix, no intercept
-  choice  = choice_vector,   # 0/1 integer
-  strata  = strata_vector,   # choice set IDs
-  offset  = offset_vector,   # or NULL
-  cluster = cluster_vector   # or NULL
-)
+library(Matrix)
+X <- sparse.model.matrix(~ pair_type * decade + edu * decade, data = d)[, -1]
+fit <- fastclogit(X, d$choice, d$couple_id, offset = d$correction,
+                  cluster = d$ego_id)
 ```
 
-### KHB mediation decomposition
+The sparse kernel is dispatched automatically on any `Matrix::sparseMatrix`.
 
-Implements Kohler, Karlson & Holm (2011) to decompose total effects into direct and indirect effects in conditional logit, correctly accounting for rescaling bias:
+## Knowing whether your fit worked
+
+This is the part that matters at scale, and the part most conditional-logit
+code leaves out. Every fit reports the route it took:
 
 ```r
-result <- khb_decompose(
-  data     = my_data,
-  key_vars = c("edu_level"),           # X: variables to decompose
-  z_vars   = c("shared_workplace"),    # Z: mediators
-  controls = c("age_diff", "distance"),# C: controls
-  strata   = "choice_set_id",
-  cluster  = "person_id",
-  choice   = "choice"
-)
-
-result$decomposition
-#   variable   coefficient  total_effect  direct_effect  indirect_effect  conf_pct
-#   edu_level  edu_levelHigh    0.842         0.614          0.228         27.1%
+fit$convergence_criterion   # "primary" | "secondary" | "plateau" |
+                            # "flat_optimum" | "iter_max" | "line_search"
+fit$convergence_message     # the same thing in a sentence
+fit$iter_log                # one row per Newton iteration
 ```
 
-## Why not `survival::clogit()`?
+`primary` (gradient below `tol`) and `flat_optimum` are unambiguous successes.
+`secondary` and `plateau` are successes under side-conditions. `iter_max` and
+`line_search` are failures. `vignette("convergence-and-diagnostics")` explains
+what each one means and what to do about it.
 
-`clogit()` internally calls `model.matrix()` and `model.frame()`, which create full copies of the data in R's memory. For a dataset with 89 million rows and 30 predictors, this means ~80-120 GB of peak RAM — more than most servers have.
+## Benchmarks
 
-`fastclogit` avoids this by building the design matrix column-by-column directly from the data.frame/data.table, and passing it to a C++ Newton-Raphson optimizer that works in-place. Peak memory for the same dataset: ~7-10 GB above the input data.
+Measured on this machine, one process per configuration, peak RSS from
+`/usr/bin/time -l` (`gc()` cannot see Armadillo's allocations, so it is the
+wrong instrument for this). Reproduce with
+`Rscript inst/validation/07_benchmarks.R`.
 
-Typical performance on a 89M-row dataset (30 predictors, clustered SEs):
+| rows | cols | dense | sparse | `survival::clogit` |
+|---|---|---|---|---|
+| 100,000 | 20 | 0.33 s / 0.30 GB | **0.05 s / 0.25 GB** | 1.06 s / 0.40 GB |
+| 500,000 | 50 | 4.32 s / 1.24 GB | **0.26 s / 0.41 GB** | — |
+| 1,000,000 | 90 | 21.34 s / 2.91 GB | **0.60 s / 0.64 GB** | — |
 
-| | `survival::clogit` | `fastclogit` (dense) | `fastclogit` (sparse, v0.4) |
-|---|---|---|---|
-| Peak RAM | ~120 GB | ~15 GB | ~3 GB |
-| Time | ~45 min | ~8 min | ~1 min |
-| Coefficients | identical (< 1e-6) | identical (< 1e-6) | identical (< 1e-15, vs dense) |
+All three engines reach the same log-likelihood to a relative spread of exactly
+zero.
 
-The sparse path requires the design matrix to be passed as a `Matrix::dgCMatrix` (typically built via `Matrix::sparse.model.matrix()`); see the [sparse quick reference](#sparse-x-quick-reference) below.
-
-## Features
-
-- **Formula interface** with automatic factor expansion, interaction support, NA handling
-- **Newton-Raphson** with LogSumExp numerical stability, adaptive ridge regularization, and step-halving line search
-- **Three-tier convergence**: absolute gradient, relative log-likelihood + unhalved-step-norm, and stall detection — robust on rare-cell × decade interactions where step-halving stalls
-- **Clustered sandwich SEs** matching `survival::coxph()` small-sample correction
-- **McFadden/Manski offsets** for stratified sampling correction
-- **Collinearity detection** via QR decomposition with column pivoting
-- **Sparse-X path** (NEW v0.4): pass a `Matrix::dgCMatrix` instead of a dense matrix and the C++ kernel automatically dispatches to a CSR-walking Newton solver. For factor-heavy designs (~5% density) this cuts peak memory by ~8× and the design matrix from O(n·p·8B) to O(nnz·12B). Bit-identical to the dense path (max coefficient drift across validation suite: 4.66e-15, machine epsilon).
-- **KHB decomposition** for mediation analysis in conditional logit (memory-safe: residuals stored separately, no full-data copies)
-- **MONA-ready**: source-able R files for restricted computing environments where packages can't be installed
-- **Data simulator** for testing and validation
-
-### Sparse-X quick reference
-
-```r
-library(fastclogit); library(Matrix)
-
-# Build sparse design matrix directly (avoids materialising the dense form)
-X_sparse <- Matrix::sparse.model.matrix(
-  ~ pair_gen * decade + age_diff * decade + edu * decade + ln_dist * decade,
-  data = dt)[, -1, drop = FALSE]  # drop the intercept
-
-# fastclogit auto-detects sparseMatrix input and dispatches to the sparse kernel
-fit <- fastclogit(
-  X = X_sparse, choice = dt$actualpartner,
-  strata = dt$CoupleId, cluster = dt$LopNrEgo)
-```
-
-The sparse path is automatic — there is no `sparse = TRUE` flag. Detection
-is via `is(X, "sparseMatrix")`. Coefficient names, vcov, vcov_robust, and the
-S3 methods (`coef`, `confint`, `summary`, etc.) are unchanged.
-
-## Convergence
-
-The optimizer uses three convergence criteria, checked in order:
-
-1. **Gradient norm**: `max|grad| < tol` (default tol = 1e-6)
-2. **Relative log-likelihood + gradient**: log-likelihood stable to `tol * 0.01` and `max|grad| < tol * 1e4`
-3. **Stall detection**: log-likelihood unchanged (< 1e-10) for 5 consecutive iterations
-
-This ensures robust convergence even when the gradient cannot reach machine precision — common with very large datasets (75M+ rows) where floating-point accumulation limits gradient accuracy.
+Production figures from Paper 3, quoted separately because you cannot reproduce
+them from this repo: 37M rows by 128 columns at ~5% density, ~225 GB to ~30 GB
+peak memory, ~95 minutes to ~80 seconds.
 
 ## Validation
 
-The package is validated against `survival::clogit()` across multiple configurations (basic, with offset, with clustering, factor predictors, interactions). Coefficients and standard errors match to machine precision. See `tests/testthat/test-basic.R`.
+`inst/validation/` holds simulation studies with pre-specified decision rules,
+covering parameter recovery, SE calibration, interval coverage, the sampling
+correction, cluster-robust inference, the KHB decomposition and nine assumption
+violations. 35 of 36 checks pass; the one failure is a documented open finding.
+`inst/validation/README.md` reports the numbers, what the studies found, and —
+importantly — two simulation designs that were wrong and one hypothesis they
+refuted.
 
-### Sparse path validation
+## Limitations
 
-The sparse kernel (`clogit_fit_sparse_cpp`) is validated against the dense kernel and `survival::clogit` on four scenarios in `tests/sparse_validation/`:
+**Stratum-constant covariates are not identified, and we do not tell you.** A
+covariate constant within every choice set but varying across them (an ego-side
+covariate in a one-sided choice model) drops out of the conditional likelihood.
+`survival::clogit` returns `NA` for such terms. This package returns a
+ridge-determined value with a meaningless standard error, and `$vcov_singular`
+does **not** flag it, because the ridge rescues the matrix inversion before the
+flag can fire. Drop such columns yourself.
 
-| Problem | n × p | Density | Max ‖Δcoef‖ vs dense | Max ‖Δcoef‖ vs survival |
-|---|---|---|---|---|
-| small dense | 2.5k × 5 | 100% | 5.55e-17 | 2.90e-14 |
-| medium factor | 40k × 23 | ~10% | 6.11e-16 | 3.49e-08 |
-| Paper-3-like | 1M × 92 | ~7% | **4.44e-16** | (clogit infeasible) |
-| edge: rare cells × cluster | 20k × 15 | ~8% | 4.66e-15 | 5.37e-10 |
+**`tol` below the attainable numerical floor reports failure.** A fit can end at
+`max|grad| = 3.8e-13` and still be labelled `iter_max` if you asked for 1e-14.
+The warning now says so. Relax `tol`.
 
-All sparse-vs-dense comparisons are at machine epsilon. Validation suite runs in ~3s on a laptop: `Rscript tests/sparse_validation/run_real_sparse.R`.
+**The dense path has an unexplained divergence at large choice-set sizes.** On
+real data at 100 alternatives per set, Paper 3 observed the dense kernel
+converging to a log-likelihood 271 units below both the sparse kernel and
+`survival`. It has never been reproduced in simulation. Prefer the sparse path
+at production scale.
 
-## References
+**Clusters must nest strata.** The cluster-robust variance assigns each stratum
+to the cluster of its first row. Since v0.5.0 a stratum spanning several
+clusters raises a warning rather than being accepted silently.
 
-- Kohler, U., Karlson, K. B. & Holm, A. (2011). Comparing coefficients of nested nonlinear probability models. *The Stata Journal*, 11(3), 420-438.
-- McFadden, D. (1978). Modelling the choice of residential location. In *Spatial Interaction Theory and Planning Models*.
-- Manski, C. F. & Lerman, S. R. (1977). The estimation of choice probabilities from choice-based samples. *Econometrica*, 45(8), 1977-1988.
+## Documentation
+
+- `vignette("getting-started")` — the tour
+- `vignette("convergence-and-diagnostics")` — reading `$iter_log`, and what each
+  convergence route means
+- `vignette("large-scale")` — sparse designs, memory, and restricted servers
+- `?fastclogit`, `?fclogit`, `?khb_decompose` — full options reference
+- `NEWS.md` — what changed and why
 
 ## License
 
-MIT
+MIT. Jesper Lindmarker.

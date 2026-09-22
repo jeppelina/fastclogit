@@ -1,0 +1,135 @@
+---
+title: "Large-scale designs and restricted servers"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Large-scale designs and restricted servers}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(fastclogit)
+```
+
+How to run this package where `survival::clogit()` cannot go: factor-heavy
+designs at tens of millions of rows, and servers where you cannot install
+packages.
+
+## When the sparse path pays
+
+The sparse kernel builds a row-major (CSR) index of the design matrix once and
+walks rows per stratum. It wins when the design has many factor dummies and few
+non-zeros per row, which is the usual shape for interacted categorical models.
+It does not win on dense continuous predictors, where it adds the CSR build for
+no compression benefit.
+
+Measured on one machine, one process per configuration, peak RSS from
+`/usr/bin/time -l`:
+
+| rows | cols | dense | sparse |
+|---|---|---|---|
+| 100,000 | 20 | 0.33 s / 0.30 GB | 0.05 s / 0.25 GB |
+| 500,000 | 50 | 4.32 s / 1.24 GB | 0.26 s / 0.41 GB |
+| 1,000,000 | 90 | 21.34 s / 2.91 GB | 0.60 s / 0.64 GB |
+
+The advantage grows with the number of columns, because dense cost scales with
+`n x p` while sparse scales with the number of non-zeros.
+
+Note the instrument: `gc()` reports R's heap, and Armadillo allocates outside
+it, so `gc()`-based memory figures for this package measure everything except
+the part that matters.
+
+## Build X sparse, never dense-then-convert
+
+The point is to avoid ever materialising the dense matrix:
+
+```{r, eval = FALSE}
+library(Matrix)
+
+X <- sparse.model.matrix(
+  ~ pair_type * decade + edu * decade + age_diff * decade + lnDist,
+  data = d
+)[, -1, drop = FALSE]          # drop the intercept, not the reference levels
+
+fit <- fastclogit(X, d$choice, d$couple_id,
+                  offset  = d$correction,
+                  cluster = d$ego_id)
+```
+
+`fclogit()`'s formula interface builds `X` **dense**. At this scale, use
+`sparse.model.matrix()` and call `fastclogit()` directly.
+
+Dropping `[, -1]` removes the intercept column. Do not instead drop the
+reference levels: keeping every level of a factor makes its dummies sum to 1 in
+every row, which is a direction constant within every stratum and therefore not
+identified. See "Identification" below.
+
+## Sizing a job
+
+Three limits are worth knowing before you queue a four-hour run.
+
+**Non-zeros must stay under 2^31.** The CSR view indexes with `int`.
+`ARMA_64BIT_WORD` raises the *virtual cell* ceiling, not this one. Both the R
+and C++ sides check it and will tell you the actual count. At 37M rows and ~6
+non-zeros per row you are at ~220M, comfortably inside.
+
+**Peak memory is dominated by X.** Sparse storage is roughly
+`nnz x 12 bytes` plus the CSR copy. The `p x p` Hessian is negligible until `p`
+runs into the thousands.
+
+**Iterations, not rows, drive wall time.** A well-conditioned fit takes 5 to 8
+Newton iterations regardless of scale. If yours is taking 40, read
+`vignette("convergence-and-diagnostics")` before adding cores.
+
+## Identification at scale
+
+Two failure modes that only bite on large factor-heavy designs.
+
+**Stratum-constant columns.** A covariate constant within every choice set
+cancels in the conditional likelihood. `survival::clogit` returns `NA`;
+this package returns a ridge-determined value with a meaningless SE, and
+`$vcov_singular` does not flag it. In a one-sided partner-choice model this is
+every ego-side main effect. Interact them with an alter-side covariate, or drop
+them.
+
+**Rare cells.** A dummy with a handful of non-zeros in tens of millions of rows
+is estimable but fragile. Until v0.5.0 the collinearity screen could delete such
+a column outright: it ran QR on a 50,000-row subsample, and a dummy whose 1s all
+fell outside it looked like a zero column. At 200,000 rows a dummy with four
+1s was dropped in 40% of runs. The screen now forces low-support columns into
+the subsample. Still: check `fit$dropped_terms` on every production fit.
+
+## Restricted servers (MONA and similar)
+
+Where R packages cannot be installed, use the source-able bundle in `mona/`:
+
+```{r, eval = FALSE}
+source("load_fastclogit.R")
+```
+
+That compiles the four `.cpp` kernels with `Rcpp::sourceCpp()` and sources the
+R files. The MONA copies inline the CSR helper rather than `#include`-ing a
+header, because R's `make` pipeline treats the `$` in UNC paths such as
+`//micro.intra/projekt/P0515$/` as a make-variable reference and expands it to
+nothing, so a header on the include path is silently unreachable.
+
+The loader resolves its own directory by checking candidates until one
+demonstrably holds `clogit_newton.cpp`, rather than trusting
+`sys.frame(1)$ofile` — which names the *outermost* frame, so under nested
+`source()` it points at whichever file started the chain. Set
+`.this_script_dir` or `CODE_PATH` before sourcing to pin it.
+
+`mona/` is **generated** from `src/` by `tools/make_mona_bundle.R`. Edit `src/`
+and regenerate; `tests/testthat/test-mona-bundle.R` fails if the committed
+bundle is stale.
+
+## Checklist before a long run
+
+1. Build `X` sparse; never `as.matrix()` it.
+2. Confirm `nnz < 2^31`.
+3. Drop stratum-constant columns yourself.
+4. Fit a subsample first and read `$iter_log`. A specification that needs 40
+   iterations at 1% of the data will need them at 100%.
+5. After the run: check `$convergence_criterion`, `$dropped_terms` and
+   `$vcov_singular` before quoting any number.

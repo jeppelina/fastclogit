@@ -112,7 +112,14 @@ khb_decompose <- function(data,
   }
 
   # Column existence checks
-  .terms_to_cols <- function(terms) unique(unlist(strsplit(terms, ":")))
+  # NULL-safe: controls defaults to NULL, and strsplit(NULL, ":") errors with
+  # "non-character argument". Line ~261 passes `controls` straight in, so
+  # khb_decompose() failed on its own documented default until 2026-09-22.
+  # The roxygen example always passes controls, which is why nobody hit it.
+  .terms_to_cols <- function(terms) {
+    if (is.null(terms) || !length(terms)) return(character(0))
+    unique(unlist(strsplit(as.character(terms), ":")))
+  }
   all_term_vars <- unique(c(key_vars, z_vars, controls))
   all_raw_cols <- .terms_to_cols(all_term_vars)
   needed <- unique(c(choice, strata, all_raw_cols))

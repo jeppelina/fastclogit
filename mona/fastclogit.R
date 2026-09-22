@@ -219,6 +219,57 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
     if (n_multi > 0) warning(n_multi, " group(s) have multiple chosen alternatives")
   }
 
+  # --- Validate: finite inputs ------------------------------------------------
+  # Without this, an NA or Inf propagates silently through the softmax and the
+  # fit dies deep in the kernel with "pinv(): svd failed", preceded by
+  # Armadillo warnings about a non-symmetric matrix. That message tells a user
+  # nothing about the actual problem, which is one bad cell in their data.
+  n_bad_off <- sum(!is.finite(offset))
+  if (n_bad_off > 0L)
+    stop("offset has ", n_bad_off, " non-finite value(s) (NA, NaN or Inf). ",
+         "Conditional logit cannot use them; fix or drop those rows.")
+  if (is_sparse) {
+    n_bad_x <- sum(!is.finite(X@x))
+  } else {
+    n_bad_x <- sum(!is.finite(X))
+  }
+  if (n_bad_x > 0L)
+    stop("X has ", n_bad_x, " non-finite value(s) (NA, NaN or Inf). ",
+         "fclogit() drops NA rows for you; fastclogit() does not, so ",
+         "remove them before calling it.")
+
+  # --- Validate: singleton strata --------------------------------------------
+  # A stratum with one alternative contributes nothing to the gradient or the
+  # Hessian -- the softmax over a single alternative is 1 -- but it is still
+  # counted in G, which enters the sandwich's finite-sample correction
+  # (G-1)/G. survival::clogit drops such strata outright.
+  n_singleton <- sum(group_size < 2L)
+  if (n_singleton > 0L)
+    warning(n_singleton, " stratum/strata have a single alternative. They ",
+            "contribute nothing to the likelihood but are counted in the ",
+            "group total used by the cluster-robust correction. ",
+            "survival::clogit drops them; consider doing the same.")
+
+  # --- Validate: cluster is constant within a stratum ------------------------
+  # The sandwich takes the cluster of each group's FIRST row, so a stratum
+  # spanning two clusters is assigned wholly to one of them and the robust SEs
+  # are computed for a clustering the caller did not ask for. Silent until
+  # 2026-09-22. In the partner-choice papers a stratum is an ego's choice set
+  # and the cluster is the ego, so this holds -- but by convention, not by
+  # construction, and a user clustering on something coarser (a county, say)
+  # gets quietly wrong standard errors.
+  if (!is.null(cluster)) {
+    cl_sorted <- cluster[ord]
+    n_split <- sum(tapply(as.character(cl_sorted),
+                          rep(seq_along(group_size), group_size),
+                          function(z) length(unique(z))) > 1L)
+    if (n_split > 0L)
+      warning(n_split, " stratum/strata span more than one cluster. The ",
+              "cluster-robust variance assigns each stratum to the cluster of ",
+              "its first row, so the reported robust SEs are not for the ",
+              "clustering you requested. Clusters must nest strata.")
+  }
+
   # --- Check for zero-variance columns ---
   # NOTE: this is GLOBAL variance. A covariate that is constant WITHIN each
   # stratum but varies across strata (an ego-side / decision-maker covariate)
@@ -364,9 +415,21 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   fit$terms <- cnames
 
   if (!fit$converged) {
+    gmax <- max(abs(fit$gradient))
     warning("fastclogit did not converge in ", fit$iterations, " iterations. ",
-            "convergence_criterion = '", fit$convergence_criterion, "'. ",
-            "Consider increasing max_iter, relaxing tol, or enabling tier-3.")
+            "convergence_criterion = '", fit$convergence_criterion, "', ",
+            "max|gradient| = ", format(gmax, digits = 3), ".",
+            # A gradient far below tol at the iteration cap means tol was set
+            # below the attainable numerical floor, not that the fit failed.
+            # Measured: at 10,000 strata a tol of 1e-14 ran all 200 iterations
+            # and ended at max|grad| = 3.8e-13, reported as NOT CONVERGED.
+            if (gmax < tol * 1e-2)
+              paste0(" Note that this gradient is already far below tol = ",
+                     format(tol, digits = 3),
+                     ", so the fit is at the optimum and tol is simply below ",
+                     "what can be computed at this scale. Relax tol.")
+            else
+              " Consider increasing max_iter, relaxing tol, or enabling tier-3.")
   } else if (isTRUE(verbose)) {
     message("fastclogit ", fit$convergence_message)
   }

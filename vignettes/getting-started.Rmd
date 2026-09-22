@@ -126,6 +126,21 @@ density), the sparse path is 20× faster than the dense path (1.4 s vs
 at the Paper-3 Step 4 target scale, the sparse path takes the fit from
 ~95 minutes / ~225 GB to ~80 seconds / ~30 GB.
 
+## Checking how the fit converged
+
+Every fit reports the route it took, not just whether it finished:
+
+```{r}
+fit$convergence_criterion
+fit$convergence_message
+head(fit$iter_log)
+```
+
+`primary` and `flat_optimum` are unambiguous successes; `iter_max` and
+`line_search` are failures. At small scale you will almost always see
+`primary`. At tens of millions of rows the distinction matters a great deal,
+and `vignette("convergence-and-diagnostics")` is about exactly that.
+
 ## Extracting results
 
 Standard S3 methods work as expected:
@@ -208,7 +223,11 @@ fit_clogit <- clogit(
     Edudiff3_BothHigh + Edudiff3_BothLow + Edudiff3_Missing +
     AgeDiffcat_2 + AgeDiffcat_3 + AgeDiffcat_4 + AgeDiffcat_5 +
     offset(correction) + strata(strata_id) + cluster(cluster_id),
-  data = d
+  data = d,
+  # clogit() defaults to method = "exact", which it refuses to combine with a
+  # robust variance. "efron" is exact for 1:m matched data (one chosen
+  # alternative per stratum), which is what conditional logit always is here.
+  method = "efron"
 )
 
 # Compare coefficients

@@ -262,6 +262,36 @@ fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
   if (drop_collinear && ncol(X) > 1) {
     sample_n <- min(nrow(X), 50000L)
     sample_idx <- sort(sample.int(nrow(X), sample_n))
+
+    # Rank on a subsample is not rank on the full data. A dummy whose few 1s
+    # all fall outside the subsample looks like a zero column, is called
+    # collinear, and is silently deleted -- even though it is perfectly
+    # estimable. Measured before this guard existed, at n = 200,000 with a
+    # 50,000-row subsample: a dummy with 4 ones was dropped in 40% of runs,
+    # one with 8 ones in 4%. That is exactly the rare-cell regime these models
+    # are built for.
+    #
+    # Guard: find columns that are (near-)degenerate IN THE SUBSAMPLE but
+    # carry support in the full data, and add all of their non-zero rows
+    # before running the QR. Cost is one column-wise pass, no large
+    # intermediate, and it only touches the columns actually at risk.
+    MIN_SUB_SUPPORT <- 20L
+    at_risk <- integer(0)
+    for (j in seq_len(ncol(X))) {
+      nz_sub <- sum(X[sample_idx, j] != 0)
+      if (nz_sub >= MIN_SUB_SUPPORT) next
+      if (sum(X[, j] != 0) > nz_sub) at_risk <- c(at_risk, j)
+    }
+    if (length(at_risk)) {
+      extra <- unique(unlist(lapply(at_risk, function(j) which(X[, j] != 0))))
+      sample_idx <- sort(unique(c(sample_idx, extra)))
+      if (verbose) {
+        message("Collinearity check: added ", length(extra),
+                " row(s) so ", length(at_risk),
+                " low-support column(s) are represented in the QR")
+      }
+    }
+
     qr_check <- qr(X[sample_idx, ])
     if (qr_check$rank < ncol(X)) {
       keep_pivot <- qr_check$pivot[seq_len(qr_check$rank)]

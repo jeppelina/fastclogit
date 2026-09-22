@@ -95,6 +95,52 @@ this release is the merge back, plus two bugs found on the way.
   just the coefficients: a reference that stores only coefficients would have
   looked healthy throughout the entire line-search-defect era.
 
+## Found by the validation studies (`inst/validation/`)
+
+New simulation studies with pre-specified decision rules, covering parameter
+recovery, SE calibration, interval coverage, the sampling correction,
+cluster-robust inference, the KHB decomposition and nine assumption violations.
+35 of 36 checks pass. They found four further defects, all fixed here:
+
+* **The collinearity screen deleted estimable columns.** `fclogit()` chose which
+  columns to drop by running QR on a 50,000-row subsample; a dummy whose few 1s
+  all fell outside it looked like a zero column and was silently removed. At
+  200,000 rows a dummy with four 1s was dropped in **40% of runs**, one with
+  eight in 4% — precisely the rare-cell regime these models exist for. Columns
+  with low support in the subsample now have their non-zero rows forced in
+  before the QR. Measured drop rate afterwards: 0% at every support level
+  tested.
+
+* **`khb_decompose()` errored on its own documented default.** `controls`
+  defaults to `NULL` and was passed straight to `strsplit()`, which rejects it.
+  The roxygen example always supplies controls, so the default path had never
+  been executed.
+
+* **Non-finite input failed deep inside the kernel.** An `NA` or `Inf` anywhere
+  in `X` or the offset surfaced as `pinv(): svd failed`, preceded by Armadillo
+  warnings about a non-symmetric matrix. Both are now caught up front, by name
+  and count.
+
+* **Strata spanning several clusters were accepted silently.** The
+  cluster-robust variance assigns each stratum to the cluster of its first row,
+  so the reported SEs were for a clustering the caller never requested. Now a
+  warning. Also warns on singleton strata, which contribute nothing to the
+  likelihood but are counted in the group total used by the finite-sample
+  correction (`survival::clogit` drops them).
+
+* **"Did not converge" at a negligible gradient is now explained.** Setting
+  `tol` below the attainable numerical floor made the optimiser grind to
+  `max_iter` and report failure at, in one measured case, `max|grad| = 3.8e-13`.
+  The warning now says the gradient is already far below `tol` and to relax it,
+  rather than suggesting more iterations.
+
+Confirmed by the same studies, previously untested: the estimator is unbiased
+with 95% intervals covering at 0.941-0.957; the McFadden-Manski offset recovers
+the population parameters while three falsification arms are biased by 126-152
+Monte Carlo standard errors; cluster-robust SEs match `survival` to 0.2% and
+recover an analytically known inflation factor of 2.000 to within 0.002; and the
+KHB decomposition recovers a known mediation structure.
+
 ## Known limitations
 
 * A covariate constant **within** every stratum but varying across strata (an
