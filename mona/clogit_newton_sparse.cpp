@@ -1,3 +1,6 @@
+// GENERATED FROM src/clogit_newton_sparse.cpp by tools/make_mona_bundle.R — DO NOT EDIT.
+// Edit the src/ copy and re-run the generator.
+
 // clogit_newton_sparse.cpp — Newton-Raphson conditional logit (sparse design)
 //
 // Sparse-X counterpart to clogit_newton.cpp.
@@ -18,12 +21,20 @@
 //      Final H = -(H1 - H2).
 //   5. Newton step: solve (-H) delta = grad, step-halve until logL increases.
 //
-// Convergence checks (THREE-tier, ported from clogit_newton.cpp PLUS the
-// unhalved-Newton-step check that prevents the Paper-3 step-halving stall):
-//   - Primary:   max|grad| < tol
-//   - Secondary: rel_ll_change < tol*0.01 AND grad_max < tol*1e4 AND
-//                prev_unhalved_step_norm < tol*1e3      [the patch]
-//   - Tertiary:  abs_ll_change < 1e-10 for 5 consecutive iters
+// Convergence ladder (synced with clogit_newton.cpp 2026-06-17):
+//   PRIMARY:   max|grad| < tol                                   (code = 1)
+//   SECONDARY: rel_ll_change < tol*0.01 AND grad_max < tol*10
+//              AND prev_unhalved_step_norm < tol*1e3             (code = 2)
+//   PLATEAU:   rel_ll_change < tier3_plateau_tol for K iters
+//              AND grad_max < tier3_grad_floor
+//              AND (prev_halving_count >= tier3_halving_floor OR
+//                   prev_step_size < tier3_step_floor)           (code = 3)
+//   iter_max:  none of the above before max_iter                 (code = 4)
+//
+// PLATEAU mirrors survival::clogit's rel-ll criterion (default 1e-9) with
+// three guardrails (persistence, grad floor, optimizer-struggling evidence)
+// so it cannot fire on clearly-unconverged problems. Best-loglik beta is
+// returned as $coefficients; per-iter trace returned as iter_log_* vectors.
 //
 // Author: Jesper Lindmarker
 // License: MIT
@@ -39,15 +50,25 @@
 #include <vector>
 #include <limits>
 #include <cmath>
-// [[Rcpp::depends(RcppArmadillo)]]
+// ---- BEGIN generated from src/csr_matrix.h (do not edit here) --------
+// Inlined so Rcpp::sourceCpp() needs no header on the include path.
+// Edit src/csr_matrix.h and re-run tools/make_mona_bundle.R instead.
+// csr_matrix.h — Row-major (CSR) view of an arma::sp_mat (CSC), shared by
+// the sparse Newton kernel and the sparse cluster-sandwich. Build O(nnz).
+//
+// Used by clogit_newton_sparse.cpp + clogit_sandwich_sparse.cpp. Keep this
+// in sync with the type contract:
+//   - n_rows × n_cols dims fit in int (R-side guards bigger inputs)
+//   - nnz fits in int: row_ptr/col_idx are int-indexed, so a matrix with more
+//     than 2^31-1 non-zeros would overflow row_ptr silently. ARMA_64BIT_WORD
+//     does NOT cover this; it raises the virtual-cell ceiling, not this one.
+//     Checked here rather than only R-side so every caller is covered.
+//   - row_ptr is monotone, size n_rows + 1, row_ptr.back() == nnz
+//   - col_idx, values size nnz
+//   - row i's nonzeros live at [row_ptr[i], row_ptr[i+1])
 
-// ---- CSR helper (inlined here so MONA's sourceCpp() install does not
-// need a separate csr_matrix.h on the include path. Avoids "No such
-// file or directory" failures on UNC paths containing '$' (which make
-// may interpret as a make-variable reference) and on any path the build
-// pipeline rewrites. The package build (R CMD INSTALL) uses
-// src/csr_matrix.h instead — keep the two in sync if you ever edit
-// either one. ----
+
+
 struct CsrMatrix {
     int n_rows;
     int n_cols;
@@ -60,10 +81,17 @@ struct CsrMatrix {
             X.n_cols > static_cast<arma::uword>(std::numeric_limits<int>::max())) {
             Rcpp::stop("CsrMatrix: sp_mat too large for int indexing (rows/cols > 2^31-1)");
         }
+        if (X.n_nonzero > static_cast<arma::uword>(std::numeric_limits<int>::max())) {
+            Rcpp::stop("CsrMatrix: sp_mat has %llu non-zeros, which overflows the "
+                       "int row_ptr/col_idx index (max %d). Subsample alters further.",
+                       static_cast<unsigned long long>(X.n_nonzero),
+                       std::numeric_limits<int>::max());
+        }
         n_rows = static_cast<int>(X.n_rows);
         n_cols = static_cast<int>(X.n_cols);
 
-        // Pass 1: count nnz per row by column-walking (cache-friendly CSC)
+        // Pass 1: count nnz per row by column-walking (faster than the
+        // general iterator — cache-friendly CSC traversal).
         std::vector<int> row_nnz(n_rows, 0);
         for (int j = 0; j < n_cols; ++j) {
             for (arma::sp_mat::const_col_iterator it = X.begin_col(j);
@@ -95,6 +123,9 @@ struct CsrMatrix {
         }
     }
 };
+// ---- END generated from src/csr_matrix.h ----------------------------
+// [[Rcpp::depends(RcppArmadillo)]]
+
 
 // ===========================================================================
 // Inline helpers — per-iteration accumulators
@@ -320,11 +351,17 @@ Rcpp::List clogit_fit_sparse_cpp(
     const arma::ivec&   group_size,
     int                 max_iter,
     double              tol,
+    bool                tier3_enable,
+    double              tier3_plateau_tol,
+    int                 tier3_plateau_iters,
+    double              tier3_grad_floor,
+    int                 tier3_halving_floor,
+    double              tier3_step_floor,
     bool                verbose)
 {
     const int n = static_cast<int>(X_csc.n_rows);
     const int p = static_cast<int>(X_csc.n_cols);
-    const int G = group_start.n_elem;
+    // (group count is read from group_start inside the accumulators)
 
     if (verbose) {
         Rprintf("Building CSR row index (%d rows x %d cols, %lld nnz)\n",
@@ -349,15 +386,37 @@ Rcpp::List clogit_fit_sparse_cpp(
     double loglik = 0.0;
     int iter = 0;
     bool converged = false;
+    int convergence_code = 4;  // default = iter_max
 
-    int stall_count = 0;
-    const int max_stall = 5;
+    // Best-loglik tracking
+    arma::vec best_beta = beta;
+    double    best_loglik = -std::numeric_limits<double>::infinity();
+    int       best_loglik_iter = 0;
 
+    // Tier-3 state
+    int    plateau_count       = 0;
+    int    prev_halving_count  = 0;
+    double prev_step_size      = 1.0;
     // Patch: track the previous UNHALVED Newton step magnitude so the
     // secondary convergence criterion distinguishes "at the MLE" from
-    // "step-halving has been killing our steps". See clogit_newton.cpp
-    // header note in the project README for the Paper-3 bug this fixes.
+    // "step-halving has been killing our steps".
     double prev_newton_step_norm = std::numeric_limits<double>::infinity();
+
+    // Per-iter trace (flat vectors; assembled into a data.table on R side)
+    std::vector<int>    log_iter;
+    std::vector<double> log_loglik;
+    std::vector<double> log_grad_max;
+    std::vector<double> log_rel_ll_change;
+    std::vector<double> log_step_size;
+    std::vector<int>    log_halving_count;
+    std::vector<int>    log_tier_fired;
+    log_iter.reserve(max_iter);
+    log_loglik.reserve(max_iter);
+    log_grad_max.reserve(max_iter);
+    log_rel_ll_change.reserve(max_iter);
+    log_step_size.reserve(max_iter);
+    log_halving_count.reserve(max_iter);
+    log_tier_fired.reserve(max_iter);
 
     for (iter = 0; iter < max_iter; ++iter) {
         double loglik_new = 0.0;
@@ -368,58 +427,86 @@ Rcpp::List clogit_fit_sparse_cpp(
                           grad, hess, loglik_new);
 
         const double grad_max = arma::abs(grad).max();
+        const double abs_ll_change = (iter > 0) ? std::abs(loglik_new - loglik) : 0.0;
+        const double rel_ll_change = (iter > 0)
+            ? abs_ll_change / (std::abs(loglik) + 1e-10) : 0.0;
+
         if (verbose) {
             Rprintf("Iter %d: loglik = %.8f, max|grad| = %.2e, prev_step = %.2e\n",
                     iter + 1, loglik_new, grad_max, prev_newton_step_norm);
         }
 
-        // Primary: absolute gradient norm
-        if (grad_max < tol) {
-            loglik = loglik_new;
-            converged = true;
-            ++iter;
-            if (verbose) Rprintf("  Converged on gradient (%.2e)\n", grad_max);
-            break;
+        // Best-loglik tracking
+        if (loglik_new > best_loglik) {
+            best_loglik      = loglik_new;
+            best_beta        = beta;
+            best_loglik_iter = iter + 1;
         }
 
-        // Secondary + Tertiary use the loglik delta
-        if (iter > 0) {
-            const double abs_ll_change = std::abs(loglik_new - loglik);
-            const double rel_ll_change = abs_ll_change / (std::abs(loglik) + 1e-10);
+        int tier_fired = 0;
 
-            // Secondary (PATCHED): rel-ll small AND grad reasonably small AND
-            // previous Newton step's intended (unhalved) magnitude was small.
-            // Without the third check, step-halving stalls at ill-conditioned
-            // interaction directions get misdiagnosed as convergence.
-            if (rel_ll_change < tol * 0.01 &&
-                grad_max       < tol * 10.0 &&     // tightened 2026-05-13
-                prev_newton_step_norm < tol * 1e3) {
-                loglik = loglik_new;
+        // PRIMARY
+        if (grad_max < tol) {
+            tier_fired = 1;
+            convergence_code = 1;
+            converged = true;
+            if (verbose) Rprintf("  Converged on gradient (%.2e)\n", grad_max);
+        }
+        // SECONDARY
+        else if (iter > 0 &&
+                 rel_ll_change          < tol * 0.01 &&
+                 grad_max               < tol * 10.0 &&
+                 prev_newton_step_norm  < tol * 1e3) {
+            tier_fired = 2;
+            convergence_code = 2;
+            converged = true;
+            if (verbose) {
+                Rprintf("  Converged on rel-ll (%.2e) + grad (%.2e) + step (%.2e)\n",
+                        rel_ll_change, grad_max, prev_newton_step_norm);
+            }
+        }
+        // PLATEAU (tier-3)
+        else if (iter > 0 && tier3_enable &&
+                 rel_ll_change < tier3_plateau_tol &&
+                 grad_max      < tier3_grad_floor &&
+                 (prev_halving_count >= tier3_halving_floor ||
+                  prev_step_size      <  tier3_step_floor)) {
+            plateau_count++;
+            if (plateau_count >= tier3_plateau_iters) {
+                tier_fired = 3;
+                convergence_code = 3;
                 converged = true;
-                ++iter;
                 if (verbose) {
-                    Rprintf("  Converged on rel-ll (%.2e) + grad (%.2e) + step (%.2e)\n",
-                            rel_ll_change, grad_max, prev_newton_step_norm);
+                    Rprintf("  Converged via plateau (tier-3): rel_ll=%.2e for %d iters, grad=%.2e, prev_halvings=%d\n",
+                            rel_ll_change, plateau_count, grad_max,
+                            prev_halving_count);
                 }
-                break;
             }
+        } else {
+            plateau_count = 0;
+        }
 
-            // Tertiary: stall detection
-            if (abs_ll_change < 1e-10) {
-                stall_count++;
-                if (stall_count >= max_stall) {
-                    loglik = loglik_new;
-                    converged = true;
-                    ++iter;
-                    if (verbose) {
-                        Rprintf("  Converged: loglik unchanged %d iters (max|grad| = %.2e)\n",
-                                max_stall, grad_max);
-                    }
-                    break;
-                }
-            } else {
-                stall_count = 0;
-            }
+        // Log this iter (step_size/halving describe the step that produced
+        // the current beta — prev iter's Newton step).
+        log_iter.push_back(iter + 1);
+        log_loglik.push_back(loglik_new);
+        log_grad_max.push_back(grad_max);
+        log_rel_ll_change.push_back((iter > 0) ? rel_ll_change : NA_REAL);
+        log_step_size.push_back((iter > 0) ? prev_step_size : NA_REAL);
+        // -1, not NA_INTEGER. log_halving_count is returned as an arma::ivec,
+        // and with ARMA_64BIT_WORD that is a 64-bit type which reaches R as a
+        // double. NA_INTEGER is INT_MIN, which then sits outside R's integer
+        // range, so as.integer() on the R side produced the right NA but also a
+        // spurious "NAs introduced by coercion to integer range" warning on
+        // every single fit. -1 round-trips cleanly and is mapped to NA in
+        // fastclogit().
+        log_halving_count.push_back((iter > 0) ? prev_halving_count : -1);
+        log_tier_fired.push_back(tier_fired);
+
+        if (converged) {
+            loglik = loglik_new;
+            ++iter;
+            break;
         }
 
         loglik = loglik_new;
@@ -443,16 +530,13 @@ Rcpp::List clogit_fit_sparse_cpp(
         }
 
         // Record UNHALVED Newton step magnitude (used by next iter's
-        // secondary convergence check, see patch note above)
+        // secondary convergence check).
         prev_newton_step_norm = arma::abs(delta).max();
 
         // Cache X * delta once so step-halving's loglik evaluation is
         // O(n) (vector add) instead of O(nnz) (full matvec) per halving.
-        // Refresh eta_ws to its current-beta value for use as the base.
         arma::vec Xdelta(X.n_rows);
         csr_mat_vec(X, delta, Xdelta);
-        // eta at current beta — recompute once so subsequent halvings can
-        // form eta_new = eta + step * Xdelta cheaply.
         csr_mat_vec_plus_offset(X, beta, offset, eta_ws);
 
         double step_size = 1.0;
@@ -461,11 +545,39 @@ Rcpp::List clogit_fit_sparse_cpp(
         int halving_count = 0;
         const int max_halving = 20;
 
-        if (iter > 0) {
+        // LINE SEARCH. Two changes, 2026-09-11, after models 2-4 of Paper 4 ran
+        // all 100 iterations without converging.
+        //
+        // (1) It now runs on the FIRST iteration too. It used to be skipped
+        //     there, so the opening Newton step was accepted unbounded however
+        //     large. From beta = 0 with an offset spanning ~8 log points, that
+        //     step had norm ~900 and drove the log-likelihood from -5.5e6 to
+        //     -4.1e8, into a region where the softmax is numerically degenerate:
+        //     the Hessian collapses toward zero, the gradient freezes, and the
+        //     Newton direction stops being an ascent direction. Nothing after
+        //     that can recover.
+        //
+        // (2) A step that improves nothing is no longer accepted. When the 20
+        //     halvings were exhausted without finding an improvement, beta_new
+        //     was assigned anyway, so the optimiser walked DOWNHILL by a tiny
+        //     amount every iteration: 90 consecutive iterations each losing
+        //     ~0.14 of log-likelihood, at roughly 70 seconds apiece. It now
+        //     stops and reports the failure instead of grinding to the cap.
+        bool ls_improved = false;
+        {
             while (halving_count < max_halving) {
                 const double ll_candidate = compute_loglik_from_eta(
                     eta_new, chosen, group_start, group_size);
-                if (ll_candidate >= loglik - 1e-10) break;
+                // Acceptance tolerance scaled to the magnitude of the
+                // log-likelihood. A fixed 1e-10 is BELOW one unit in the last
+                // place once |loglik| passes about 4.5e5: at Paper 4's
+                // -4.26e6 an ulp is 9.5e-10, so near the optimum this test was
+                // comparing rounding noise and could never register an
+                // improvement. That is what produced 20 halvings on every
+                // iteration in fits that were already finished, and, once the
+                // 2026-09-11 guard was added, what made them report failure.
+                const double ll_tol = 1e-10 + 8.0 * std::fabs(loglik) * 2.220446049250313e-16;
+                if (ll_candidate >= loglik - ll_tol) { ls_improved = true; break; }
                 step_size *= 0.5;
                 beta_new = beta + step_size * delta;
                 eta_new  = eta_ws + step_size * Xdelta;
@@ -476,13 +588,60 @@ Rcpp::List clogit_fit_sparse_cpp(
                         halving_count, step_size);
             }
         }
+
+        // Save for next iter's tier-3 check / iter-log row.
+        prev_halving_count = halving_count;
+        prev_step_size     = step_size;
+
+        if (!ls_improved) {
+            // A line search that cannot improve is ambiguous, and the gradient
+            // tells the two cases apart.
+            //
+            // AT a maximum, no step improves the log-likelihood: that is what
+            // being at a maximum means. The first version of this guard
+            // (2026-09-11) broke unconditionally and reported failure, which
+            // mislabelled fits that were finished. On 2026-09-12 that cost a
+            // men's KHB decomposition: M1 stopped here with the log-likelihood
+            // flat to twelve significant figures and max|grad| 8.4e-04, was
+            // renamed FAILED, and the decomposition was skipped for the sex.
+            //
+            // AWAY from a maximum the gradient is still large, the Newton
+            // direction has stopped being an ascent direction, and continuing
+            // only walks downhill. That is the Paper 4 M2 case: gradient frozen
+            // at 3.95e+06.
+            //
+            // tier3_grad_floor is the same ceiling the plateau rule uses for
+            // exactly this judgement, so the two agree by construction.
+            if (grad_max < tier3_grad_floor) {
+                converged        = true;
+                convergence_code = 6;
+                if (verbose) {
+                    Rprintf("  Line search cannot improve and max|grad| = %.2e is below the "
+                            "floor (%.2e).\n  At a flat optimum; treating as converged.\n",
+                            grad_max, tier3_grad_floor);
+                }
+            } else {
+                convergence_code = 5;
+                if (verbose) {
+                    Rprintf("  Line search exhausted %d halvings without improving the "
+                            "log-likelihood, and max|grad| = %.2e is still large.\n  Stopping: "
+                            "the Newton direction is not an ascent direction here.\n",
+                            max_halving, grad_max);
+                }
+            }
+            break;
+        }
+
         beta = beta_new;
     }
 
-    // Recompute Hessian at final beta for variance estimation
+    if (!converged) convergence_code = 4;
+
+    // Recompute Hessian at best_beta for variance estimation
+    arma::vec beta_final = best_beta;
     {
         double loglik_final = 0.0;
-        compute_grad_hess(X, beta, offset, chosen,
+        compute_grad_hess(X, beta_final, offset, chosen,
                           group_start, group_size,
                           eta_ws, prob_ws, xbar_k_ws,
                           H1_ws, H2_ws, nz_xbar_ws,
@@ -490,15 +649,51 @@ Rcpp::List clogit_fit_sparse_cpp(
         loglik = loglik_final;
     }
 
-    arma::mat vcov = arma::inv_sympd(-hess);
+    // Final variance estimate. Rank-deficient designs (aliased columns,
+    // separation-on-rare-cells) produce a singular -H, so inv_sympd fails
+    // even at the MLE. Mirror the in-iter solve's adaptive ridge: tiny
+    // ridge first, then a heavier ridge + pinv fallback. Flag via
+    // vcov_singular so downstream can refuse to trust the SEs.
+    arma::mat neg_H_final = -hess;
+    double ridge_final = 1e-8 * arma::abs(neg_H_final.diag()).max();
+    if (ridge_final < 1e-12) ridge_final = 1e-12;
+    neg_H_final.diag() += ridge_final;
+    arma::mat vcov;
+    bool vcov_singular = false;
+    if (!arma::inv_sympd(vcov, neg_H_final)) {
+        vcov_singular = true;
+        neg_H_final.diag() += 1e-4 * arma::abs(neg_H_final.diag()).max();
+        if (!arma::inv_sympd(vcov, neg_H_final)) {
+            vcov = arma::pinv(neg_H_final);
+            Rcpp::warning("Final Hessian singular even after ridge; using pseudoinverse for vcov.");
+        }
+    }
+
+    arma::ivec log_iter_arma         = arma::conv_to<arma::ivec>::from(log_iter);
+    arma::vec  log_loglik_arma       = arma::conv_to<arma::vec >::from(log_loglik);
+    arma::vec  log_grad_max_arma     = arma::conv_to<arma::vec >::from(log_grad_max);
+    arma::vec  log_rel_ll_change_arma = arma::conv_to<arma::vec>::from(log_rel_ll_change);
+    arma::vec  log_step_size_arma    = arma::conv_to<arma::vec >::from(log_step_size);
+    arma::ivec log_halving_count_arma = arma::conv_to<arma::ivec>::from(log_halving_count);
+    arma::ivec log_tier_fired_arma   = arma::conv_to<arma::ivec>::from(log_tier_fired);
 
     return Rcpp::List::create(
-        Rcpp::Named("coefficients") = beta,
-        Rcpp::Named("vcov")         = vcov,
-        Rcpp::Named("hessian")      = hess,
-        Rcpp::Named("loglik")       = loglik,
-        Rcpp::Named("iterations")   = iter,
-        Rcpp::Named("converged")    = converged,
-        Rcpp::Named("gradient")     = grad
+        Rcpp::Named("coefficients")           = beta_final,
+        Rcpp::Named("vcov")                   = vcov,
+        Rcpp::Named("vcov_singular")          = vcov_singular,
+        Rcpp::Named("hessian")                = hess,
+        Rcpp::Named("loglik")                 = loglik,
+        Rcpp::Named("iterations")             = iter,
+        Rcpp::Named("converged")              = converged,
+        Rcpp::Named("convergence_code")       = convergence_code,
+        Rcpp::Named("gradient")               = grad,
+        Rcpp::Named("best_loglik_iter")       = best_loglik_iter,
+        Rcpp::Named("iter_log_iter")          = log_iter_arma,
+        Rcpp::Named("iter_log_loglik")        = log_loglik_arma,
+        Rcpp::Named("iter_log_grad_max")      = log_grad_max_arma,
+        Rcpp::Named("iter_log_rel_ll_change") = log_rel_ll_change_arma,
+        Rcpp::Named("iter_log_step_size")     = log_step_size_arma,
+        Rcpp::Named("iter_log_halving_count") = log_halving_count_arma,
+        Rcpp::Named("iter_log_tier_fired")    = log_tier_fired_arma
     );
 }

@@ -12,6 +12,12 @@ fastclogit(
   cluster = NULL,
   max_iter = 25L,
   tol = 1e-06,
+  tier3_enable = TRUE,
+  tier3_plateau_tol = 1e-09,
+  tier3_plateau_iters = 3L,
+  tier3_grad_floor = 0.01,
+  tier3_halving_floor = 2L,
+  tier3_step_floor = 0.001,
   verbose = FALSE
 )
 }
@@ -19,7 +25,10 @@ fastclogit(
 \item{X}{Design matrix (n x p). Either a numeric `matrix` (dense path)
 or any `Matrix::sparseMatrix` (sparse path; coerced to `dgCMatrix`).
 All predictors must be pre-expanded — factors already dummy-coded.
-No intercept (not identified in conditional logit).}
+No intercept (not identified in conditional logit). The sparse path
+requires `clogit_newton_sparse.cpp` / `clogit_sandwich_sparse.cpp`
+to have been compiled (automatic in the installed package; via
+`load_fastclogit.R` in source mode).}
 
 \item{choice}{Integer or logical vector (n). 1/TRUE for chosen alternative.}
 
@@ -33,23 +42,63 @@ Enters the linear predictor as a fixed shift: eta = X*beta + offset.}
 
 \item{max_iter}{Integer. Maximum Newton-Raphson iterations.}
 
-\item{tol}{Numeric. Convergence tolerance on max absolute gradient.}
+\item{tol}{Numeric. Convergence tolerance on max absolute gradient
+(tier-1 / tier-2 primary criterion).}
+
+\item{tier3_enable}{Logical. Enable the loglik-plateau (tier-3) convergence
+criterion. When TRUE the optimizer accepts convergence on a sustained
+loglik plateau even if max|gradient| has not reached `tol`, provided
+side-conditions hold (see tier3_* params). Set FALSE for pure gradient-
+based convergence (legacy behaviour pre-2026-06-17).}
+
+\item{tier3_plateau_tol}{Numeric. Relative log-likelihood change ceiling
+for a plateau iteration: |LL_new - LL_old| / |LL_old| < this. Default
+1e-9 matches survival::clogit's `eps`. Extra strictness over survival
+comes from `tier3_plateau_iters` (persistence) and the grad / step
+guardrails below, not from tightening this threshold further.}
+
+\item{tier3_plateau_iters}{Integer. Number of CONSECUTIVE plateau
+iterations required before tier-3 fires. Default 3.}
+
+\item{tier3_grad_floor}{Numeric. Tier-3 is suppressed when
+max|gradient| exceeds this floor (default 1e-2). Anti-noise guard:
+refuses to declare convergence when clearly far from the MLE.}
+
+\item{tier3_halving_floor}{Integer. Tier-3 fires only if the previous
+iteration's step-halving count is at least this value (default 2) OR
+the previous step size fell below `tier3_step_floor`. Evidence the
+optimizer is genuinely struggling on a flat ridge.}
+
+\item{tier3_step_floor}{Numeric. See `tier3_halving_floor`. Default 1e-3.}
 
 \item{verbose}{Logical. Print iteration progress.}
 }
 \value{
 An object of class "fastclogit" with components:
-  \item{coefficients}{Named vector of estimated coefficients}
+  \item{coefficients}{Named vector of estimated coefficients (best-loglik
+    beta across iterations — survival::clogit semantics. Differs from
+    the loop-terminating beta only when step-halving overshoots at the tail.)}
   \item{vcov}{Model-based variance-covariance matrix}
   \item{vcov_robust}{Clustered sandwich variance (if cluster supplied)}
   \item{se}{Model-based standard errors}
   \item{se_robust}{Clustered robust standard errors (if cluster supplied)}
-  \item{loglik}{Maximized log-likelihood}
+  \item{loglik}{Maximized log-likelihood (at $coefficients)}
+  \item{gradient}{Gradient at $coefficients}
+  \item{hessian}{Observed Hessian at $coefficients}
   \item{iterations}{Number of iterations used}
-  \item{converged}{Logical: did the algorithm converge?}
+  \item{converged}{Logical: did the algorithm converge under any tier?}
+  \item{convergence_criterion}{Character: "primary" (gradient), "secondary"
+    (rel-ll + grad + step), "plateau" (tier-3), or "iter_max" (failed)}
+  \item{convergence_message}{Human-readable explanation of the
+    convergence outcome}
+  \item{best_loglik_iter}{Iteration that produced $coefficients}
+  \item{iter_log}{data.table with one row per Newton iter: iter, loglik,
+    grad_max, rel_ll_change, step_size, halving_count, tier_fired}
   \item{n_obs}{Number of rows}
   \item{n_groups}{Number of choice sets}
   \item{n_clusters}{Number of clusters (if cluster supplied)}
+  \item{terms}{Character vector of coefficient names (survives unscaling)}
+  \item{call}{The matched call}
 }
 \description{
 Memory-efficient conditional logit via Rcpp Newton-Raphson. Supports
@@ -64,9 +113,8 @@ less memory and is 10-25x faster (see Details).
 builds a CSR row-major index from the CSC `dgCMatrix` (once, O(nnz)) and
 walks rows per stratum to assemble the gradient and Hessian. The dense
 path uses Armadillo's per-stratum submatrix view and BLAS. Both kernels
-share the same three-tier convergence (gradient norm, relative
-log-likelihood + unhalved Newton step, stall detection) and produce
-coefficients agreeing at machine epsilon on the same input.
+share the same convergence ladder and produce coefficients agreeing at
+machine epsilon on the same input.
 
 **When sparse helps.** Sparse wins when the design matrix has many
 factor dummies and few non-zeros per row. For a Paper-3-like model
@@ -74,12 +122,28 @@ factor dummies and few non-zeros per row. For a Paper-3-like model
 to ~30 GB and a typical fit from ~95 minutes to ~80 seconds. For dense
 continuous predictors the two paths are about even (sparse adds the CSR
 build overhead with no compression benefit).
+
+**Convergence.** Four outcomes are reported through
+`$convergence_criterion`: `"primary"` (max|gradient| < `tol`),
+`"secondary"` (relative log-likelihood change, gradient and unhalved
+Newton step all tight), `"plateau"` (the tier-3 rule below), and
+`"flat_optimum"` (the line search cannot improve but the gradient is
+already below `tier3_grad_floor`). Two outcomes are failures:
+`"iter_max"` and `"line_search"` (the Newton direction stopped being an
+ascent direction). `$iter_log` holds the full per-iteration trace.
+
+**Identification.** The zero-variance screen uses *global* variance. A
+covariate constant within every stratum but varying across strata (an
+ego-side covariate in a one-sided choice model) is not identified in
+conditional logit, but passes the screen. `survival::clogit` returns NA
+for such terms; this function currently returns a ridge-determined value
+with a meaningless standard error. Drop such columns yourself.
 }
 \examples{
 # Simulate data
 sim <- simulate_clogit_data(n_egos = 1000, n_alts = 50)
 
-# Fit without clustering (dense path)
+# Fit without clustering
 fit <- fastclogit(sim$X, sim$choice, sim$strata, offset = sim$offset)
 summary(fit)
 
@@ -89,7 +153,7 @@ fit_cl <- fastclogit(sim$X, sim$choice, sim$strata,
 summary(fit_cl)
 
 # Sparse path — pass a sparseMatrix instead of a dense matrix
-# (Coefficients are bit-identical to the dense fit.)
+# (Coefficients agree with the dense fit to machine epsilon.)
 \dontrun{
 library(Matrix)
 X_sparse <- as(sim$X, "CsparseMatrix")

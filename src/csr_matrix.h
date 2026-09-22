@@ -4,6 +4,10 @@
 // Used by clogit_newton_sparse.cpp + clogit_sandwich_sparse.cpp. Keep this
 // in sync with the type contract:
 //   - n_rows × n_cols dims fit in int (R-side guards bigger inputs)
+//   - nnz fits in int: row_ptr/col_idx are int-indexed, so a matrix with more
+//     than 2^31-1 non-zeros would overflow row_ptr silently. ARMA_64BIT_WORD
+//     does NOT cover this; it raises the virtual-cell ceiling, not this one.
+//     Checked here rather than only R-side so every caller is covered.
 //   - row_ptr is monotone, size n_rows + 1, row_ptr.back() == nnz
 //   - col_idx, values size nnz
 //   - row i's nonzeros live at [row_ptr[i], row_ptr[i+1])
@@ -13,6 +17,7 @@
 
 #include <RcppArmadillo.h>
 #include <vector>
+#include <limits>
 
 struct CsrMatrix {
     int n_rows;
@@ -25,6 +30,12 @@ struct CsrMatrix {
         if (X.n_rows > static_cast<arma::uword>(std::numeric_limits<int>::max()) ||
             X.n_cols > static_cast<arma::uword>(std::numeric_limits<int>::max())) {
             Rcpp::stop("CsrMatrix: sp_mat too large for int indexing (rows/cols > 2^31-1)");
+        }
+        if (X.n_nonzero > static_cast<arma::uword>(std::numeric_limits<int>::max())) {
+            Rcpp::stop("CsrMatrix: sp_mat has %llu non-zeros, which overflows the "
+                       "int row_ptr/col_idx index (max %d). Subsample alters further.",
+                       static_cast<unsigned long long>(X.n_nonzero),
+                       std::numeric_limits<int>::max());
         }
         n_rows = static_cast<int>(X.n_rows);
         n_cols = static_cast<int>(X.n_cols);

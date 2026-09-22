@@ -1,17 +1,3 @@
-###############################################################################
-#### fastclogit_methods.R — S3 methods for "fastclogit" objects
-####
-#### Provides: coef, vcov, logLik, confint, print, summary, tidy_fastclogit
-####
-#### Loaded via load_fastclogit.R (MONA) or as part of the fastclogit package.
-####
-#### tidy_fastclogit() includes a safety check to recover coefficient names
-#### from object$terms if names are lost during post-fit unscaling.
-####
-#### Author: Jesper Lindmarker
-#### License: MIT
-###############################################################################
-
 #' @export
 coef.fastclogit <- function(object, ...) {
   object$coefficients
@@ -79,12 +65,21 @@ summary.fastclogit <- function(object, robust = TRUE, ...) {
   ci <- confint(object, robust = robust)
 
   # Note: cbind(Name = named_vec) can silently drop column names in R 4.5.x.
-  # Set colnames explicitly.
-  coef_table <- cbind(cf, se, z, p, ci)
-  colnames(coef_table)[1:4] <- c("Estimate", "Std. Error", "z value", "Pr(>|z|)")
+  #
+  # The p-value MUST be the last column. printCoefmat() identifies the p-value
+  # column by position (the last one), not by name. Appending the confidence
+  # interval after `p` made printCoefmat hand the 97.5% bound to symnum(),
+  # which errors with "'x' must be between 0 and 1" for any fit whose upper
+  # bound falls outside [0, 1] — and, worse, prints silently wrong
+  # significance stars for any fit where it happens not to. Reported by Ben
+  # 2026-09-22. The CI is kept in a separate element for tidy_fastclogit()
+  # and for callers who want it.
+  coef_table <- cbind(cf, se, z, p)
+  colnames(coef_table) <- c("Estimate", "Std. Error", "z value", "Pr(>|z|)")
 
   out <- list(
     coef_table = coef_table,
+    conf_int   = ci,
     loglik     = object$loglik,
     n_obs      = object$n_obs,
     n_groups   = object$n_groups,
@@ -92,6 +87,8 @@ summary.fastclogit <- function(object, robust = TRUE, ...) {
     converged  = object$converged,
     iterations = object$iterations,
     se_type    = se_type,
+    convergence_criterion = object$convergence_criterion,
+    convergence_message   = object$convergence_message,
     call       = object$call
   )
   class(out) <- "summary.fastclogit"
@@ -112,11 +109,16 @@ print.summary.fastclogit <- function(x, digits = 4, ...) {
         " (", x$se_type, " SEs)\n", sep = "")
   }
   cat("  Log-likelihood: ", format(x$loglik, digits = 8), "\n")
-  cat("  Converged:    ", x$converged, " (", x$iterations, " iterations)\n\n", sep = "")
+  cat("  Converged:    ", x$converged, " (", x$iterations, " iterations",
+      if (!is.null(x$convergence_criterion))
+        paste0(", via ", x$convergence_criterion) else "",
+      ")\n\n", sep = "")
 
   cat("Coefficients:\n")
+  # cs.ind = 1:2 (estimate, SE), tst.ind = 3 (z), p-value is the last column.
   printCoefmat(x$coef_table, digits = digits, signif.stars = TRUE,
-               has.Pvalue = TRUE, P.values = TRUE, cs.ind = 1:2)
+               has.Pvalue = TRUE, P.values = TRUE,
+               cs.ind = 1:2, tst.ind = 3L)
   cat("---\n")
   cat("SE type:", x$se_type, "\n")
   invisible(x)
@@ -126,18 +128,21 @@ print.summary.fastclogit <- function(x, digits = 4, ...) {
 #' Extract results as a tidy data.frame
 #'
 #' Returns coefficients, SEs, z-values, p-values, and CIs in a data.frame.
-#' Called by tidy_fastclogit_result() in run_fastclogit_models.R.
+#' Compatible with broom-style workflows.
 #'
-#' Includes a safety check: if names(object$coefficients) is NULL (can happen
-#' when post-fit operations like unscaling strip names), falls back to
-#' object$terms, then to V1, V2, ...
+#' Includes a safety check: if \code{names(object$coefficients)} is
+#' \code{NULL} (can happen when post-fit operations like unscaling strip
+#' names), falls back to \code{object$terms}, then to V1, V2, ...
 #'
-#' @param object A fastclogit object
-#' @param robust Use robust (clustered sandwich) SEs if available? Default TRUE.
+#' @param object A \code{fastclogit} object.
+#' @param robust Use robust (clustered sandwich) SEs if available? Default
+#'   \code{TRUE}.
 #' @param conf.level Confidence level for intervals. Default 0.95.
-#' @param exponentiate Return odds ratios instead of log-odds? Default FALSE.
-#' @return A data.frame with columns: term, estimate, std.error, statistic,
-#'   p.value, conf.low, conf.high
+#' @param exponentiate Return odds ratios instead of log-odds? Default
+#'   \code{FALSE}.
+#' @return A data.frame with columns: \code{term}, \code{estimate},
+#'   \code{std.error}, \code{statistic}, \code{p.value}, \code{conf.low},
+#'   \code{conf.high}.
 #' @export
 tidy_fastclogit <- function(object, robust = TRUE, conf.level = 0.95,
                              exponentiate = FALSE) {

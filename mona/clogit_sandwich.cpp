@@ -1,3 +1,6 @@
+// GENERATED FROM src/clogit_sandwich.cpp by tools/make_mona_bundle.R — DO NOT EDIT.
+// Edit the src/ copy and re-run the generator.
+
 // clogit_sandwich.cpp — Clustered sandwich (robust) variance estimation
 //
 // Computes V_robust = H^{-1} B H^{-1} where:

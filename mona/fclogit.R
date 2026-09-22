@@ -1,24 +1,99 @@
-###############################################################################
-#### fclogit.R — Formula interface for fastclogit (source-able version)
-####
-#### Wraps fastclogit() with a standard R formula, automatic factor expansion,
-#### interaction handling, NA removal, and collinearity detection.
-####
-#### Requires: fastclogit() already loaded (via load_fastclogit.R or package)
-####
-#### Usage:
-####   source("fclogit.R")
-####   fit <- fclogit(actualpartner ~ AgeDiffcat + EduPairing + lnDist,
-####                  data = dt, strata = "CoupleId", cluster = "LopNrEgo",
-####                  offset = "correction")
-####   summary(fit)
-####
-#### Author: Jesper Lindmarker
-#### License: MIT
-###############################################################################
-
+#' Conditional Logit with Formula Interface
+#'
+#' A user-friendly wrapper around \code{\link{fastclogit}} that accepts a
+#' standard R formula, builds the design matrix internally (column-by-column,
+#' without \code{model.matrix()} memory duplication), and returns a fitted
+#' \code{"fastclogit"} object.
+#'
+#' This is the recommended entry point for most users. The lower-level
+#' \code{\link{fastclogit}()} function is still available for cases where you
+#' want to supply a pre-built design matrix.
+#'
+#' Note: \code{fclogit()} builds X as a dense numeric matrix. For factor-heavy
+#' designs at very large scale (>10M rows with many factor levels), build X as
+#' a sparse matrix via \code{Matrix::sparse.model.matrix()} and call
+#' \code{\link{fastclogit}()} directly — see Examples and the
+#' \dQuote{Sparse-X path} section of \code{?fastclogit}.
+#'
+#' @param formula A formula of the form \code{choice ~ x1 + x2 + factor_var}.
+#'   Supports factor/character predictors (automatically dummy-coded, dropping
+#'   the first level as reference), numeric predictors, and two-way interactions
+#'   (\code{x1:x2}). An intercept is never included (not identified in
+#'   conditional logit).
+#' @param data A data.frame or data.table containing the variables in the
+#'   formula plus the strata, cluster, and offset columns.
+#' @param strata Character string naming the column in \code{data} that
+#'   identifies choice sets (e.g., \code{"CoupleId"}).
+#' @param cluster Optional character string naming the column for clustered
+#'   sandwich standard errors (e.g., \code{"LopNrEgo"}). If \code{NULL},
+#'   only model-based SEs are computed.
+#' @param offset Optional character string naming the column for a fixed offset
+#'   in the linear predictor (e.g., McFadden/Manski sampling correction). If
+#'   \code{NULL}, no offset is used.
+#' @param drop_collinear Logical. If \code{TRUE} (default), uses QR
+#'   decomposition with column pivoting to detect and drop collinear columns
+#'   before fitting.
+#' @param max_iter Integer. Maximum Newton-Raphson iterations (default 25).
+#' @param tol Numeric. Convergence tolerance on the maximum absolute gradient
+#'   element (default 1e-6).
+#' @param tier3_enable,tier3_plateau_tol,tier3_plateau_iters,tier3_grad_floor,tier3_halving_floor,tier3_step_floor
+#'   Tier-3 (log-likelihood plateau) convergence controls, passed straight
+#'   through to \code{\link{fastclogit}}. See that function's documentation.
+#' @param verbose Logical. If \code{TRUE}, prints progress during fitting.
+#' @param na.action How to handle NAs. Default \code{"na.exclude"} drops rows
+#'   with NAs in any variable used by the model, strata, cluster, or offset.
+#'
+#' @return An object of class \code{"fastclogit"} (see \code{\link{fastclogit}}
+#'   for full details). Additionally stores:
+#'   \item{formula}{The original formula}
+#'   \item{strata_name}{Name of the strata column}
+#'   \item{cluster_name}{Name of the cluster column (if any)}
+#'   \item{offset_name}{Name of the offset column (if any)}
+#'   \item{dropped_terms}{Data frame of terms dropped for zero variance or
+#'     collinearity, with columns \code{term} and \code{reason}}
+#'   \item{n_dropped_rows}{Number of rows dropped due to NAs}
+#'
+#' @examples
+#' # Simulate some data
+#' sim <- simulate_clogit_data(n_egos = 500, n_alts = 30)
+#' d <- sim$data
+#'
+#' # Fit using formula interface
+#' fit <- fclogit(choice ~ lnDist + n_years_same_cfar + n_years_same_peorg,
+#'                data = d, strata = "strata_id", cluster = "cluster_id")
+#' summary(fit)
+#'
+#' # With offset (McFadden/Manski correction)
+#' fit2 <- fclogit(choice ~ lnDist + n_years_same_cfar,
+#'                 data = d, strata = "strata_id",
+#'                 cluster = "cluster_id", offset = "correction")
+#' summary(fit2)
+#'
+#' # With factor predictors (automatic dummy coding)
+#' d$edu <- factor(sample(c("Low", "Mid", "High"), nrow(d), replace = TRUE),
+#'                 levels = c("Low", "Mid", "High"))
+#' fit3 <- fclogit(choice ~ lnDist + edu, data = d, strata = "strata_id")
+#' summary(fit3)
+#'
+#' # For very large factor-heavy designs, bypass fclogit and build X sparse:
+#' \dontrun{
+#' library(Matrix)
+#' X_sparse <- sparse.model.matrix(
+#'   ~ pair_gen_meso * decade + age * decade + edu * decade,
+#'   data = dt)[, -1, drop = FALSE]   # drop intercept
+#' fit <- fastclogit(X_sparse, choice = dt$y,
+#'                   strata = dt$CoupleId, cluster = dt$LopNrEgo)
+#' }
+#'
+#' @export
 fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
                     drop_collinear = TRUE, max_iter = 25L, tol = 1e-6,
+                    tier3_enable        = TRUE,
+                    tier3_plateau_tol   = 1e-9,
+                    tier3_plateau_iters = 3L,
+                    tier3_grad_floor    = 1e-2,
+                    tier3_halving_floor = 2L,
+                    tier3_step_floor    = 1e-3,
                     verbose = FALSE, na.action = "na.exclude") {
 
   cl <- match.call()
@@ -30,7 +105,7 @@ fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
   if (length(formula) != 3) stop("formula must have a response (e.g., choice ~ x1 + x2)")
 
   response_var <- as.character(formula[[2]])
-  formula_terms <- attr(stats::terms(formula), "term.labels")
+  formula_terms <- attr(terms(formula), "term.labels")
 
   # Separate interaction terms from main effects
   interaction_terms <- formula_terms[grepl(":", formula_terms)]
@@ -170,7 +245,7 @@ fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
                               stringsAsFactors = FALSE)
 
   # Zero variance
-  col_vars <- apply(X, 2, stats::var, na.rm = TRUE)
+  col_vars <- apply(X, 2, var, na.rm = TRUE)
   zero_var <- which(col_vars < .Machine$double.eps)
   if (length(zero_var) > 0) {
     if (verbose) {
@@ -223,6 +298,12 @@ fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
     cluster = cluster_vec,
     max_iter = max_iter,
     tol     = tol,
+    tier3_enable        = tier3_enable,
+    tier3_plateau_tol   = tier3_plateau_tol,
+    tier3_plateau_iters = tier3_plateau_iters,
+    tier3_grad_floor    = tier3_grad_floor,
+    tier3_halving_floor = tier3_halving_floor,
+    tier3_step_floor    = tier3_step_floor,
     verbose = verbose
   )
 

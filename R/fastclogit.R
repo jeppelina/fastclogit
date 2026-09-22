@@ -10,7 +10,10 @@
 #' @param X Design matrix (n x p). Either a numeric `matrix` (dense path)
 #'   or any `Matrix::sparseMatrix` (sparse path; coerced to `dgCMatrix`).
 #'   All predictors must be pre-expanded — factors already dummy-coded.
-#'   No intercept (not identified in conditional logit).
+#'   No intercept (not identified in conditional logit). The sparse path
+#'   requires `clogit_newton_sparse.cpp` / `clogit_sandwich_sparse.cpp`
+#'   to have been compiled (automatic in the installed package; via
+#'   `load_fastclogit.R` in source mode).
 #' @param choice Integer or logical vector (n). 1/TRUE for chosen alternative.
 #' @param strata Vector (n). Group/choice-set identifier (e.g., CoupleId).
 #' @param offset Numeric vector (n) or NULL. McFadden/Manski correction.
@@ -18,7 +21,28 @@
 #' @param cluster Vector or NULL. Cluster identifier for sandwich SEs
 #'   (e.g., LopNrEgo). If NULL, only model-based SEs are computed.
 #' @param max_iter Integer. Maximum Newton-Raphson iterations.
-#' @param tol Numeric. Convergence tolerance on max absolute gradient.
+#' @param tol Numeric. Convergence tolerance on max absolute gradient
+#'   (tier-1 / tier-2 primary criterion).
+#' @param tier3_enable Logical. Enable the loglik-plateau (tier-3) convergence
+#'   criterion. When TRUE the optimizer accepts convergence on a sustained
+#'   loglik plateau even if max|gradient| has not reached `tol`, provided
+#'   side-conditions hold (see tier3_* params). Set FALSE for pure gradient-
+#'   based convergence (legacy behaviour pre-2026-06-17).
+#' @param tier3_plateau_tol Numeric. Relative log-likelihood change ceiling
+#'   for a plateau iteration: |LL_new - LL_old| / |LL_old| < this. Default
+#'   1e-9 matches survival::clogit's `eps`. Extra strictness over survival
+#'   comes from `tier3_plateau_iters` (persistence) and the grad / step
+#'   guardrails below, not from tightening this threshold further.
+#' @param tier3_plateau_iters Integer. Number of CONSECUTIVE plateau
+#'   iterations required before tier-3 fires. Default 3.
+#' @param tier3_grad_floor Numeric. Tier-3 is suppressed when
+#'   max|gradient| exceeds this floor (default 1e-2). Anti-noise guard:
+#'   refuses to declare convergence when clearly far from the MLE.
+#' @param tier3_halving_floor Integer. Tier-3 fires only if the previous
+#'   iteration's step-halving count is at least this value (default 2) OR
+#'   the previous step size fell below `tier3_step_floor`. Evidence the
+#'   optimizer is genuinely struggling on a flat ridge.
+#' @param tier3_step_floor Numeric. See `tier3_halving_floor`. Default 1e-3.
 #' @param verbose Logical. Print iteration progress.
 #'
 #' @details
@@ -26,9 +50,8 @@
 #' builds a CSR row-major index from the CSC `dgCMatrix` (once, O(nnz)) and
 #' walks rows per stratum to assemble the gradient and Hessian. The dense
 #' path uses Armadillo's per-stratum submatrix view and BLAS. Both kernels
-#' share the same three-tier convergence (gradient norm, relative
-#' log-likelihood + unhalved Newton step, stall detection) and produce
-#' coefficients agreeing at machine epsilon on the same input.
+#' share the same convergence ladder and produce coefficients agreeing at
+#' machine epsilon on the same input.
 #'
 #' **When sparse helps.** Sparse wins when the design matrix has many
 #' factor dummies and few non-zeros per row. For a Paper-3-like model
@@ -37,24 +60,53 @@
 #' continuous predictors the two paths are about even (sparse adds the CSR
 #' build overhead with no compression benefit).
 #'
+#' **Convergence.** Four outcomes are reported through
+#' `$convergence_criterion`: `"primary"` (max|gradient| < `tol`),
+#' `"secondary"` (relative log-likelihood change, gradient and unhalved
+#' Newton step all tight), `"plateau"` (the tier-3 rule below), and
+#' `"flat_optimum"` (the line search cannot improve but the gradient is
+#' already below `tier3_grad_floor`). Two outcomes are failures:
+#' `"iter_max"` and `"line_search"` (the Newton direction stopped being an
+#' ascent direction). `$iter_log` holds the full per-iteration trace.
+#'
+#' **Identification.** The zero-variance screen uses *global* variance. A
+#' covariate constant within every stratum but varying across strata (an
+#' ego-side covariate in a one-sided choice model) is not identified in
+#' conditional logit, but passes the screen. `survival::clogit` returns NA
+#' for such terms; this function currently returns a ridge-determined value
+#' with a meaningless standard error. Drop such columns yourself.
+#'
 #' @return An object of class "fastclogit" with components:
-#'   \item{coefficients}{Named vector of estimated coefficients}
+#'   \item{coefficients}{Named vector of estimated coefficients (best-loglik
+#'     beta across iterations — survival::clogit semantics. Differs from
+#'     the loop-terminating beta only when step-halving overshoots at the tail.)}
 #'   \item{vcov}{Model-based variance-covariance matrix}
 #'   \item{vcov_robust}{Clustered sandwich variance (if cluster supplied)}
 #'   \item{se}{Model-based standard errors}
 #'   \item{se_robust}{Clustered robust standard errors (if cluster supplied)}
-#'   \item{loglik}{Maximized log-likelihood}
+#'   \item{loglik}{Maximized log-likelihood (at $coefficients)}
+#'   \item{gradient}{Gradient at $coefficients}
+#'   \item{hessian}{Observed Hessian at $coefficients}
 #'   \item{iterations}{Number of iterations used}
-#'   \item{converged}{Logical: did the algorithm converge?}
+#'   \item{converged}{Logical: did the algorithm converge under any tier?}
+#'   \item{convergence_criterion}{Character: "primary" (gradient), "secondary"
+#'     (rel-ll + grad + step), "plateau" (tier-3), or "iter_max" (failed)}
+#'   \item{convergence_message}{Human-readable explanation of the
+#'     convergence outcome}
+#'   \item{best_loglik_iter}{Iteration that produced $coefficients}
+#'   \item{iter_log}{data.table with one row per Newton iter: iter, loglik,
+#'     grad_max, rel_ll_change, step_size, halving_count, tier_fired}
 #'   \item{n_obs}{Number of rows}
 #'   \item{n_groups}{Number of choice sets}
 #'   \item{n_clusters}{Number of clusters (if cluster supplied)}
+#'   \item{terms}{Character vector of coefficient names (survives unscaling)}
+#'   \item{call}{The matched call}
 #'
 #' @examples
 #' # Simulate data
 #' sim <- simulate_clogit_data(n_egos = 1000, n_alts = 50)
 #'
-#' # Fit without clustering (dense path)
+#' # Fit without clustering
 #' fit <- fastclogit(sim$X, sim$choice, sim$strata, offset = sim$offset)
 #' summary(fit)
 #'
@@ -64,7 +116,7 @@
 #' summary(fit_cl)
 #'
 #' # Sparse path — pass a sparseMatrix instead of a dense matrix
-#' # (Coefficients are bit-identical to the dense fit.)
+#' # (Coefficients agree with the dense fit to machine epsilon.)
 #' \dontrun{
 #' library(Matrix)
 #' X_sparse <- as(sim$X, "CsparseMatrix")
@@ -77,20 +129,36 @@
 #'   a formula without materialising the dense version.
 #' @export
 fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
-                        max_iter = 25L, tol = 1e-6, verbose = FALSE) {
+                        max_iter = 25L, tol = 1e-6,
+                        tier3_enable        = TRUE,
+                        tier3_plateau_tol   = 1e-9,
+                        tier3_plateau_iters = 3L,
+                        tier3_grad_floor    = 1e-2,
+                        tier3_halving_floor = 2L,
+                        tier3_step_floor    = 1e-3,
+                        verbose = FALSE) {
 
   cl <- match.call()
 
   # --- Input validation ---
-  # Sparse path: dgCMatrix / sparseMatrix from Matrix package.
-  # Dense path: numeric matrix / coercible data.frame.
+  # Sparse X (Matrix::sparseMatrix / dgCMatrix) dispatches to the sparse
+  # C++ kernel; dense matrices stay on the original path. data.frames are
+  # coerced to dense numeric matrices for backward compatibility.
   is_sparse <- inherits(X, "sparseMatrix")
   if (is_sparse) {
     if (!requireNamespace("Matrix", quietly = TRUE))
       stop("Sparse X path requires the Matrix package. install.packages('Matrix').")
+    if (!exists("clogit_fit_sparse_cpp", mode = "function"))
+      stop("Sparse C++ kernel not loaded. Run source('load_fastclogit.R') ",
+           "after placing clogit_newton_sparse.cpp / ",
+           "clogit_sandwich_sparse.cpp alongside the dense .cpp files.")
     # Coerce any sparse format to CSC (dgCMatrix) — Armadillo's sp_mat is CSC.
     if (!inherits(X, "dgCMatrix")) X <- methods::as(X, "CsparseMatrix")
-    # nnz guard — sp_mat indices are 32-bit signed in Armadillo
+    # nnz guard. The CSR view the kernel builds indexes row_ptr/col_idx with
+    # int, so more than 2^31-1 non-zeros overflows it. ARMA_64BIT_WORD raises
+    # the virtual-cell ceiling, not this one. The kernel checks too; this is
+    # here to fail before the expensive sort below, with a message that names
+    # the actual count.
     nnz <- length(X@x)
     if (nnz > .Machine$integer.max)
       stop("Sparse X has ", format(nnz, big.mark = ","),
@@ -99,8 +167,8 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   } else {
     if (is.data.frame(X)) X <- as.matrix(X)
     if (!is.matrix(X) || !is.numeric(X)) {
-      stop("X must be a numeric matrix, data.frame coercible to numeric, ",
-           "or a sparseMatrix (Matrix package)")
+      stop("X must be a numeric matrix, data.frame coercible to numeric ",
+           "matrix, or a Matrix::sparseMatrix.")
     }
   }
 
@@ -121,7 +189,9 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   }
 
   # --- Sort by strata (required for group boundary computation) ---
-  # dgCMatrix row-indexing via [i, , drop=FALSE] works the same as for dense.
+  # Row indexing on a sparseMatrix returns a sparseMatrix of the same class
+  # (subsetting goes through Matrix::"[" methods), so X[ord, ] works for
+  # both dense and sparse without further branching.
   ord <- order(strata)
   X       <- X[ord, , drop = FALSE]
   choice  <- choice[ord]
@@ -150,6 +220,11 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
   }
 
   # --- Check for zero-variance columns ---
+  # NOTE: this is GLOBAL variance. A covariate that is constant WITHIN each
+  # stratum but varies across strata (an ego-side / decision-maker covariate)
+  # passes this check and is not identified in conditional logit.
+  # survival::clogit returns NA for such terms; we currently do not.
+  # See Research/FASTCLOGIT_MERGE_MAP.md section 5a.
   if (is_sparse) {
     # var(col_j) = (sum(x_j^2) - n*mean(x_j)^2) / (n - 1).
     # Walk dgCMatrix slots directly: avoids the 3.8-GB intermediate that
@@ -174,9 +249,18 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
     p <- ncol(X)
   }
 
-  # --- Fit via C++ (dispatch on storage type) ---
-  fit_fn      <- if (is_sparse) clogit_fit_sparse_cpp     else clogit_fit_cpp
+  # --- Fit via C++ (sparse or dense) ---
+  # Coerce tier-3 controls. Booleans go to bool, ints to int, doubles to numeric.
+  tier3_enable_b        <- isTRUE(tier3_enable)
+  tier3_plateau_tol_d   <- as.numeric(tier3_plateau_tol)
+  tier3_plateau_iters_i <- as.integer(tier3_plateau_iters)
+  tier3_grad_floor_d    <- as.numeric(tier3_grad_floor)
+  tier3_halving_floor_i <- as.integer(tier3_halving_floor)
+  tier3_step_floor_d    <- as.numeric(tier3_step_floor)
+
+  fit_fn      <- if (is_sparse) clogit_fit_sparse_cpp      else clogit_fit_cpp
   sandwich_fn <- if (is_sparse) clogit_sandwich_sparse_cpp else clogit_sandwich_cpp
+
   if (is_sparse && verbose) {
     # Coerce to numeric BEFORE multiplying — n * p as integers overflows
     # at Paper-3 scale (70M * 128 ~ 8.9e9 > .Machine$integer.max).
@@ -185,8 +269,65 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
             format(length(X@x), big.mark = ","), ", density = ",
             sprintf("%.2f%%", 100 * length(X@x) / cells_dbl), ")")
   }
+
   fit <- fit_fn(X, choice, offset, group_start, group_size,
-                as.integer(max_iter), tol, verbose)
+                as.integer(max_iter), tol,
+                tier3_enable_b, tier3_plateau_tol_d,
+                tier3_plateau_iters_i, tier3_grad_floor_d,
+                tier3_halving_floor_i, tier3_step_floor_d,
+                verbose)
+
+  # --- Decode convergence_code into a human-readable criterion + message ---
+  fit$convergence_criterion <- switch(as.character(fit$convergence_code),
+    "1" = "primary",
+    "2" = "secondary",
+    "3" = "plateau",
+    "4" = "iter_max",
+    "5" = "line_search",
+    "6" = "flat_optimum",
+    "unknown")
+  fit$convergence_message <- switch(fit$convergence_criterion,
+    primary   = sprintf("converged via primary (max|grad|=%.2e < tol %.2e) at iter %d",
+                       max(abs(fit$gradient)), tol, fit$iterations),
+    secondary = sprintf("converged via secondary (rel-ll + grad + unhalved-step all tight) at iter %d",
+                       fit$iterations),
+    plateau   = sprintf("converged via plateau (tier-3): loglik flat for %d consecutive iters with max|grad|=%.2e (best beta at iter %d)",
+                       tier3_plateau_iters_i, max(abs(fit$gradient)),
+                       fit$best_loglik_iter),
+    iter_max  = sprintf("did NOT converge: hit max_iter=%d with max|grad|=%.2e (returning best-loglik beta from iter %d)",
+                       max_iter, max(abs(fit$gradient)), fit$best_loglik_iter),
+    line_search = sprintf("did NOT converge: line search could not improve the log-likelihood at iter %d (max|grad|=%.2e). The Newton direction stopped being an ascent direction, usually after an overlarge early step. See Research/KNOWN_ISSUES_fastclogit.md",
+                       fit$iterations, max(abs(fit$gradient))),
+    flat_optimum = sprintf("converged: the line search could not improve the log-likelihood and max|grad|=%.2e is below the plateau floor, i.e. a flat optimum, at iter %d",
+                       max(abs(fit$gradient)), fit$iterations),
+    sprintf("convergence_code = %s (unknown)", fit$convergence_code))
+
+  # --- Assemble iter_log data.table from the flat vectors C++ returned ---
+  # Always returned (could be 0-length if loop terminated before any push,
+  # which shouldn't happen but defends against it).
+  fit$iter_log <- data.frame(
+    iter          = as.integer(fit$iter_log_iter),
+    loglik        = as.numeric(fit$iter_log_loglik),
+    grad_max      = as.numeric(fit$iter_log_grad_max),
+    rel_ll_change = as.numeric(fit$iter_log_rel_ll_change),
+    step_size     = as.numeric(fit$iter_log_step_size),
+    # The kernel sends -1 for "no preceding step" (iteration 1). It cannot
+    # send NA_INTEGER: under ARMA_64BIT_WORD the trace comes back as a double
+    # and INT_MIN then falls outside R's integer range, which produced the
+    # right NA plus a spurious coercion warning on every fit.
+    halving_count = {
+      hc <- as.integer(fit$iter_log_halving_count)
+      hc[hc < 0L] <- NA_integer_
+      hc
+    },
+    tier_fired    = c("none", "primary", "secondary", "plateau")[
+                      as.integer(fit$iter_log_tier_fired) + 1L],
+    stringsAsFactors = FALSE
+  )
+  # Drop the flat per-iter vectors now that they're folded into iter_log.
+  fit$iter_log_iter <- fit$iter_log_loglik <- fit$iter_log_grad_max <- NULL
+  fit$iter_log_rel_ll_change <- fit$iter_log_step_size <- NULL
+  fit$iter_log_halving_count <- fit$iter_log_tier_fired <- NULL
 
   # --- Attach column names ---
   cnames <- colnames(X)
@@ -224,7 +365,19 @@ fastclogit <- function(X, choice, strata, offset = NULL, cluster = NULL,
 
   if (!fit$converged) {
     warning("fastclogit did not converge in ", fit$iterations, " iterations. ",
-            "Consider increasing max_iter or checking for separation.")
+            "convergence_criterion = '", fit$convergence_criterion, "'. ",
+            "Consider increasing max_iter, relaxing tol, or enabling tier-3.")
+  } else if (isTRUE(verbose)) {
+    message("fastclogit ", fit$convergence_message)
+  }
+
+  # Surface the final-Hessian rank-deficiency flag from the kernel. When
+  # TRUE, some coefficient SEs will be unreliable (they correspond to
+  # aliased / nearly-aliased columns the ridge had to load-bear through).
+  if (isTRUE(fit$vcov_singular)) {
+    warning("fastclogit: final Hessian was singular and required ridge ",
+            "regularization for vcov. SEs on aliased coefficients should ",
+            "not be trusted. Set fit$vcov_singular to inspect.")
   }
 
   class(fit) <- "fastclogit"

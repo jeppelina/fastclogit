@@ -1,5 +1,13 @@
 # fastclogit
 
+> **Identification caveat.** A covariate that is constant *within* every
+> stratum but varies across them (an ego-side covariate in a one-sided choice
+> model) is not identified in conditional logit. The zero-variance screen uses
+> global variance, so such a column passes it: `survival::clogit` returns NA
+> for these terms, `fastclogit` returns a ridge-determined value with a
+> meaningless standard error, and `$vcov_singular` does not flag it. Drop them
+> before fitting. Tracked in `../FASTCLOGIT_MERGE_MAP.md`.
+
 Memory-efficient conditional logit estimation for large-scale discrete choice data. Built on Rcpp/RcppArmadillo with a Newton-Raphson optimizer designed to handle datasets with millions to hundreds of millions of rows — where `survival::clogit()` runs out of memory.
 
 ## Installation

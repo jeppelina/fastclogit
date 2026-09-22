@@ -36,6 +36,9 @@
 #' @param max_iter Integer. Maximum Newton-Raphson iterations (default 25).
 #' @param tol Numeric. Convergence tolerance on the maximum absolute gradient
 #'   element (default 1e-6).
+#' @param tier3_enable,tier3_plateau_tol,tier3_plateau_iters,tier3_grad_floor,tier3_halving_floor,tier3_step_floor
+#'   Tier-3 (log-likelihood plateau) convergence controls, passed straight
+#'   through to \code{\link{fastclogit}}. See that function's documentation.
 #' @param verbose Logical. If \code{TRUE}, prints progress during fitting.
 #' @param na.action How to handle NAs. Default \code{"na.exclude"} drops rows
 #'   with NAs in any variable used by the model, strata, cluster, or offset.
@@ -85,6 +88,12 @@
 #' @export
 fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
                     drop_collinear = TRUE, max_iter = 25L, tol = 1e-6,
+                    tier3_enable        = TRUE,
+                    tier3_plateau_tol   = 1e-9,
+                    tier3_plateau_iters = 3L,
+                    tier3_grad_floor    = 1e-2,
+                    tier3_halving_floor = 2L,
+                    tier3_step_floor    = 1e-3,
                     verbose = FALSE, na.action = "na.exclude") {
 
   cl <- match.call()
@@ -289,6 +298,12 @@ fclogit <- function(formula, data, strata, cluster = NULL, offset = NULL,
     cluster = cluster_vec,
     max_iter = max_iter,
     tol     = tol,
+    tier3_enable        = tier3_enable,
+    tier3_plateau_tol   = tier3_plateau_tol,
+    tier3_plateau_iters = tier3_plateau_iters,
+    tier3_grad_floor    = tier3_grad_floor,
+    tier3_halving_floor = tier3_halving_floor,
+    tier3_step_floor    = tier3_step_floor,
     verbose = verbose
   )
 

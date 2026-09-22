@@ -79,6 +79,16 @@ dir.create(REF_DIR, recursive = TRUE, showWarnings = FALSE)
     gradient     = fit$gradient,
     iterations   = fit$iterations,
     converged    = fit$converged,
+    # Store the convergence ROUTE, not just the fact of convergence. A
+    # reference that records only coefficients would have looked healthy all
+    # through the line-search-defect era: both defects act by stopping
+    # somewhere else, and the route plus the final gradient is what shows it.
+    # A reference that converged via the tier-3 plateau, hit the iteration
+    # cap, or ended with a loose gradient is not a trustworthy baseline —
+    # refit it before treating it as one.
+    convergence_criterion = fit$convergence_criterion,
+    grad_max              = max(abs(fit$gradient)),
+    vcov_singular         = isTRUE(fit$vcov_singular),
     n_obs        = fit$n_obs,
     n_groups     = fit$n_groups,
     n_clusters   = fit$n_clusters,

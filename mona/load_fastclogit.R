@@ -23,16 +23,42 @@
 
 cat("=== Loading fastclogit (sourceCpp mode) ===\n")
 
-# --- Locate files relative to this script ---
-if (exists(".this_script_dir")) {
-  FASTCLOGIT_DIR <- .this_script_dir
-} else {
-  FASTCLOGIT_DIR <- tryCatch({
-    script_path <- sys.frame(1)$ofile
-    if (!is.null(script_path)) dirname(normalizePath(script_path))
-    else getwd()
-  }, error = function(e) getwd())
-}
+# --- Locate the kernels -------------------------------------------------
+# Try several candidates and take the first that DEMONSTRABLY holds the .cpp
+# files, rather than trusting one guess.
+#
+# The old version trusted sys.frame(1)$ofile alone. sys.frame(1) is the
+# OUTERMOST frame, not the calling one, so with nested source() calls it
+# names whichever file started the chain. Sourced from a job script in a
+# subdirectory (job -> helper -> wrapper -> engine -> here) it resolved to
+# that subdirectory and the load died with "Cannot find:
+# .../clogit_newton.cpp", 0.3 s into a job budgeted at four hours
+# (Paper 3, 2026-09-10). It happened to work from a top-level source() only
+# because the frame was then load_fastclogit.R's own.
+#
+# Checking for the file removes the guesswork: a candidate is either right or
+# it is skipped. Set .this_script_dir or CODE_PATH before sourcing to pin it.
+.fc_candidates <- c(
+  if (exists(".this_script_dir")) .this_script_dir else NULL,
+  if (exists("CODE_PATH")) CODE_PATH else NULL,
+  if (exists("CODE_PATH")) file.path(CODE_PATH, "lib") else NULL,
+  getwd(),
+  file.path(getwd(), "lib"),
+  tryCatch({
+    sp <- sys.frame(1)$ofile
+    if (!is.null(sp)) dirname(normalizePath(sp)) else NULL
+  }, error = function(e) NULL)
+)
+.fc_found <- Filter(function(d)
+  !is.null(d) && nzchar(d) && file.exists(file.path(d, "clogit_newton.cpp")),
+  .fc_candidates)
+if (!length(.fc_found))
+  stop("load_fastclogit.R cannot locate clogit_newton.cpp. Looked in:\n  ",
+       paste(unique(unlist(.fc_candidates)), collapse = "\n  "),
+       "\nSet .this_script_dir to the directory holding the .cpp files ",
+       "before sourcing.")
+FASTCLOGIT_DIR <- .fc_found[[1]]
+rm(.fc_candidates, .fc_found)
 
 cat("  Directory:", FASTCLOGIT_DIR, "\n")
 
@@ -74,24 +100,32 @@ cat("  Compiling clogit_newton.cpp (dense)... ")
 Rcpp::sourceCpp(cpp_newton, env = globalenv())
 cat("OK\n")
 
-if (file.exists(cpp_newton_sparse)) {
-  cat("  Compiling clogit_newton_sparse.cpp... ")
-  Rcpp::sourceCpp(cpp_newton_sparse, env = globalenv())
-  cat("OK\n")
-} else {
-  cat("  (skipping sparse Newton kernel — file not present)\n")
-}
-
 cat("  Compiling clogit_sandwich.cpp (dense)... ")
 Rcpp::sourceCpp(cpp_sandwich, env = globalenv())
 cat("OK\n")
 
-if (file.exists(cpp_sandwich_sparse)) {
+# --- Compile sparse C++ files if present ---------------------------------
+# The sparse path is optional and needs BOTH files: fastclogit() dispatches
+# on inherits(X, "sparseMatrix") and would find only half a kernel if one
+# were missing. Compile both or neither.
+if (file.exists(cpp_newton_sparse) && file.exists(cpp_sandwich_sparse)) {
+  cat("  Compiling clogit_newton_sparse.cpp... ")
+  Rcpp::sourceCpp(cpp_newton_sparse, env = globalenv())
+  cat("OK\n")
   cat("  Compiling clogit_sandwich_sparse.cpp... ")
   Rcpp::sourceCpp(cpp_sandwich_sparse, env = globalenv())
   cat("OK\n")
+
+  # Smoke check: confirm both entry points actually reached the global env.
+  if (!exists("clogit_fit_sparse_cpp", mode = "function"))
+    stop("Sparse kernel compiled but clogit_fit_sparse_cpp not exported. ",
+         "Check that the file's [[Rcpp::export]] attribute is intact.")
+  if (!exists("clogit_sandwich_sparse_cpp", mode = "function"))
+    stop("Sparse kernel compiled but clogit_sandwich_sparse_cpp not exported.")
 } else {
-  cat("  (skipping sparse sandwich — file not present)\n")
+  cat("  Sparse kernel files not found — sparse-X dispatch will be disabled.\n")
+  cat("    Looked for: ", basename(cpp_newton_sparse),
+      " and ", basename(cpp_sandwich_sparse), "\n", sep = "")
 }
 
 # --- Source R files ---
@@ -126,7 +160,14 @@ if (!.source_if_exists("simulate_clogit.R", "simulate_clogit.R (data simulator)"
 .source_if_exists("khb_decompose.R", "khb_decompose.R (KHB mediation)")
 
 # --- Quick sanity check ---
+# Needs simulate_clogit.R, which is deliberately not deployed on MONA. Without
+# this guard the check called a function that does not exist and printed
+# "Sanity check: FAIL", which reads as a broken kernel when in fact all four
+# .cpp kernels had just compiled cleanly. Say SKIPPED, and mean it.
 cat("  Sanity check: ")
+if (!exists("simulate_clogit_data")) {
+  cat("SKIPPED (simulate_clogit.R not deployed; kernels compiled OK)\n")
+} else
 tryCatch({
   test_sim <- simulate_clogit_data(n_egos = 50, n_alts = 10, seed = 1)
   test_fit <- fastclogit(test_sim$X, test_sim$choice, test_sim$strata)

@@ -1,88 +1,91 @@
-###############################################################################
-#### khb_decompose.R — Generic KHB decomposition for conditional logit
-####
-#### Implements Kohler, Karlson & Holm (2011) to decompose total effects into
-#### direct and indirect (mediated) effects in conditional logit models, while
-#### correctly accounting for rescaling bias.
-####
-#### This is the GENERIC version — not tied to specific column naming. For the
-#### project-specific version (using CoupleId, actualpartner, etc.), see
-#### khb_fastclogit.R in Scripts feb 11/.
-####
-#### Requires: fastclogit() and fclogit() already loaded
-####           (via load_fastclogit.R or library(fastclogit))
-####
-#### Usage:
-####   source("khb_decompose.R")
-####   result <- khb_decompose(
-####     data     = my_data,
-####     key_vars = c("education"),
-####     z_vars   = c("shared_workplace", "distance"),
-####     controls = c("age_diff"),
-####     strata   = "choice_set_id",
-####     cluster  = "person_id",
-####     choice   = "chosen"
-####   )
-####   result$decomposition
-####
-#### Author: Jesper Lindmarker
-#### License: MIT
-###############################################################################
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-.khb_match_names <- function(var_name, coef_names) {
-  # Exact match
-  if (var_name %in% coef_names) return(var_name)
-  # Interaction match
-  if (grepl(":", var_name)) {
-    parts <- strsplit(var_name, ":")[[1]]
-    matches <- vapply(coef_names, function(cn) {
-      cn_parts <- strsplit(cn, ":")[[1]]
-      if (length(cn_parts) != length(parts)) return(FALSE)
-      all(mapply(function(p, cp) startsWith(cp, p), parts, cn_parts))
-    }, logical(1))
-    return(coef_names[matches])
-  }
-  # Prefix match (factor dummies)
-  matches <- coef_names[startsWith(coef_names, var_name) & !grepl(":", coef_names)]
-  matches
-}
-
-.khb_coef_matrix <- function(fit) {
-  cf <- coef(fit)
-  se <- if (!is.null(fit$se_robust)) fit$se_robust else fit$se
-  z_val <- cf / se
-  p_val <- 2 * stats::pnorm(-abs(z_val))
-  mat <- cbind(cf, se, z_val, p_val)
-  colnames(mat) <- c("coef", "se", "z", "p")
-  rownames(mat) <- names(cf)
-  mat
-}
-
-
-# ---------------------------------------------------------------------------
-# Main function
-# ---------------------------------------------------------------------------
-
-#' KHB Decomposition for Conditional Logit
+#' KHB Decomposition for Conditional Logit Models
 #'
-#' @param data        Data.frame or data.table.
-#' @param key_vars    Character vector of key variable names (X) to decompose.
-#' @param z_vars      Character vector of mediator variable names (Z).
-#' @param controls    Character vector of control variable names, or NULL.
-#' @param strata      Name of the choice-set / strata column.
-#' @param cluster     Name of the cluster column (for robust SEs), or NULL.
-#' @param choice      Name of the binary outcome column (default "choice").
-#' @param offset      Name of an offset column, or NULL.
-#' @param verbose     Print progress? Default TRUE.
+#' Implements the Kohler, Karlson & Holm (2011) method to decompose total
+#' effects into direct and indirect (mediated) effects in conditional logit
+#' models, while correctly accounting for rescaling bias.
 #'
-#' @return List with: success, decomposition, z_effects, coef_reduced,
-#'   coef_full, n_obs, n_groups
+#' In nonlinear models like logit, adding mediator variables changes the scale
+#' of all coefficients (because the residual variance changes). This means you
+#' cannot simply compare coefficients across nested models to assess mediation.
+#' The KHB method solves this by residualizing the mediators on the key
+#' variables within strata, so that both models share the same residual
+#' variance scale.
 #'
+#' @section Method:
+#' \enumerate{
+#'   \item Residualize each Z-variable on the key variables X and controls C
+#'     within strata: \code{Z_resid = residuals(lm(Z ~ X + C | strata))}
+#'   \item Fit a \strong{reduced} model: \code{Y ~ X + Z_resid + C} (total
+#'     effect of X, on the same scale as the full model)
+#'   \item Fit a \strong{full} model: \code{Y ~ X + Z + C} (direct effect of X)
+#'   \item Indirect effect = Total - Direct
+#'   \item Confounding ratio = Total / Direct
+#' }
+#'
+#' @param data A data.frame or data.table.
+#' @param key_vars Character vector of key variable names (X) whose effects to
+#'   decompose. Supports factor variables and interaction terms (e.g.,
+#'   \code{"edu:age"}).
+#' @param z_vars Character vector of mediator variable names (Z). Must be
+#'   simple column names (no interactions).
+#' @param controls Character vector of control variable names (C), or
+#'   \code{NULL}.
+#' @param strata Character string naming the choice-set/strata column.
+#' @param cluster Optional character string naming the cluster column for
+#'   robust SEs. If \code{NULL}, model-based SEs are used.
+#' @param choice Character string naming the binary choice/outcome column
+#'   (default \code{"choice"}).
+#' @param offset Optional character string naming an offset column (e.g.,
+#'   McFadden/Manski correction). If \code{NULL}, no offset.
+#' @param verbose Logical. Print progress? Default \code{TRUE}.
+#'
+#' @return A list with:
+#'   \item{success}{Logical.}
+#'   \item{decomposition}{A data.frame with columns: \code{variable},
+#'     \code{coefficient}, \code{total_effect}, \code{total_se},
+#'     \code{direct_effect}, \code{direct_se}, \code{indirect_effect},
+#'     \code{indirect_se}, \code{conf_ratio}, \code{conf_pct}.}
+#'   \item{z_effects}{A data.frame of mediator effects from the full model.}
+#'   \item{coef_reduced}{Coefficient matrix from the reduced model.}
+#'   \item{coef_full}{Coefficient matrix from the full model.}
+#'   \item{n_obs}{Number of observations used.}
+#'   \item{n_groups}{Number of choice sets.}
+#'
+#' @references
+#' Kohler, U., Karlson, K. B. & Holm, A. (2011). Comparing coefficients of
+#' nested nonlinear probability models. \emph{The Stata Journal}, 11(3),
+#' 420--438.
+#'
+#' @examples
+#' \dontrun{
+#' # Generate data with a known mediation structure
+#' set.seed(42)
+#' n_egos <- 500; n_alts <- 30
+#' n <- n_egos * n_alts
+#' d <- data.frame(
+#'   strata_id = rep(1:n_egos, each = n_alts),
+#'   x = rnorm(n),
+#'   c1 = rnorm(n)
+#' )
+#' d$z <- 0.6 * d$x + rnorm(n)  # z is mediated by x
+#' eta <- 0.5 * d$x + 0.8 * d$z + 0.3 * d$c1
+#'
+#' # Generate choices via softmax within strata
+#' d$choice <- 0L
+#' for (i in 1:n_egos) {
+#'   rows <- ((i-1)*n_alts + 1):(i*n_alts)
+#'   probs <- exp(eta[rows] - max(eta[rows]))
+#'   probs <- probs / sum(probs)
+#'   d$choice[rows[sample(n_alts, 1, prob = probs)]] <- 1L
+#' }
+#'
+#' result <- khb_decompose(d, key_vars = "x", z_vars = "z",
+#'                          controls = "c1", strata = "strata_id",
+#'                          choice = "choice")
+#' result$decomposition
+#' }
+#'
+#' @export
 khb_decompose <- function(data,
                            key_vars,
                            z_vars,
@@ -98,9 +101,9 @@ khb_decompose <- function(data,
   # -------------------------------------------------------------------------
   # Input validation
   # -------------------------------------------------------------------------
-  # MEMORY: We never copy the full dataset. We extract only needed columns
-  # into a slim data frame, store residuals in a separate list, and build
-  # a fit-ready data frame for the two fclogit() calls.
+  # MEMORY: We never copy the full dataset. Residuals are stored in a
+  # separate list, and we build slim data frames (only needed columns)
+  # for the fclogit() calls.
 
   has_interaction <- grepl(":", z_vars)
   if (any(has_interaction)) {
@@ -108,6 +111,7 @@ khb_decompose <- function(data,
          paste(z_vars[has_interaction], collapse = ", "))
   }
 
+  # Column existence checks
   .terms_to_cols <- function(terms) unique(unlist(strsplit(terms, ":")))
   all_term_vars <- unique(c(key_vars, z_vars, controls))
   all_raw_cols <- .terms_to_cols(all_term_vars)
@@ -119,7 +123,7 @@ khb_decompose <- function(data,
     stop("Column(s) not found in data: ", paste(missing, collapse = ", "))
   }
 
-  # Validate choice sets
+  # Validate choice sets: each stratum must have exactly 1 chosen
   chosen_per <- tapply(data[[choice]], data[[strata]], sum)
   bad <- sum(chosen_per != 1)
   if (bad > 0) stop(bad, " strata do not have exactly 1 chosen alternative")
@@ -139,14 +143,14 @@ khb_decompose <- function(data,
   resid_predictors <- c(key_vars, controls)
   resid_columns <- .terms_to_cols(resid_predictors)
 
-  # Extract only needed columns into a slim data frame (avoids copying full data)
+  # Convert characters to factors in a slim copy of needed columns only
+  # (avoids triggering copy-on-modify on the full dataset)
   slim_cols <- unique(c(all_raw_cols, choice, strata))
   if (!is.null(cluster)) slim_cols <- c(slim_cols, cluster)
   if (!is.null(offset))  slim_cols <- c(slim_cols, offset)
   slim <- data[, slim_cols, drop = FALSE]
   if (inherits(slim, "data.table")) slim <- as.data.frame(slim)
 
-  # Convert characters to factors
   for (v in all_raw_cols) {
     if (is.character(slim[[v]])) slim[[v]] <- factor(slim[[v]])
   }
@@ -168,7 +172,7 @@ khb_decompose <- function(data,
   }
   rm(grp_sums, grp_means)
 
-  # Completeness mask
+  # Completeness mask for residualization predictors
   n_rows <- nrow(slim)
   X_ok <- rep(TRUE, n_rows)
   for (v in resid_columns) X_ok <- X_ok & !is.na(slim[[v]])
@@ -184,10 +188,10 @@ khb_decompose <- function(data,
       mm <- stats::model.matrix(~ 0 + slim[[z]])
       dummy_names <- make.names(paste0(z, "_", levels(slim[[z]])), unique = TRUE)
       colnames(mm) <- dummy_names
+      # Store dummy columns in resid_store temporarily (will be overwritten with residuals)
       for (dn in dummy_names) resid_store[[dn]] <- mm[, dn]
       z_expanded[[z]] <- dummy_names
       for (dn in dummy_names) z_orig_map[[dn]] <- z
-      if (verbose) .msg(sprintf("  Factor mediator '%s' -> %d dummies", z, length(dummy_names)))
     } else {
       z_expanded[[z]] <- z
       z_orig_map[[z]] <- z
@@ -247,20 +251,22 @@ khb_decompose <- function(data,
   # -------------------------------------------------------------------------
   # MEMORY: Instead of adding residual columns to the (possibly huge) input
   # data, we build a slim data frame containing only the columns needed by
-  # the two fclogit() calls.
+  # the two fclogit() calls.  This keeps peak memory to ~2x the columns
+  # actually used, rather than copying the entire dataset.
 
+  # Columns shared by both models
   meta_cols <- c(choice, strata)
   if (!is.null(cluster)) meta_cols <- c(meta_cols, cluster)
   if (!is.null(offset))  meta_cols <- c(meta_cols, offset)
   shared_pred_cols <- unique(c(.terms_to_cols(key_vars), .terms_to_cols(controls)))
 
-  # Build fit data: slim[meta + X + C + Z] + residual columns from resid_store
+  # Build reduced-model data: slim[meta + X + C] + residual columns from resid_store
   fit_data <- slim[, unique(c(meta_cols, shared_pred_cols, z_vars)), drop = FALSE]
   for (zr in z_resid_names) {
     fit_data[[zr]] <- resid_store[[zr]]
   }
 
-  # Free resid_store and slim — no longer needed
+  # Free resid_store and slim now — no longer needed
   rm(resid_store, slim)
   gc(verbose = FALSE)
 
@@ -291,7 +297,7 @@ khb_decompose <- function(data,
   .msg("  Converged: ", fit_reduced$converged,
        " (", fit_reduced$iterations, " iterations)")
 
-  coef_reduced <- .khb_coef_matrix(fit_reduced)
+  coef_reduced <- .build_khb_coef_matrix(fit_reduced)
 
   # -------------------------------------------------------------------------
   # Step 3: Fit full model (X + Z + C) -> direct effect
@@ -324,7 +330,7 @@ khb_decompose <- function(data,
   .msg("  Converged: ", fit_full$converged,
        " (", fit_full$iterations, " iterations)")
 
-  coef_full <- .khb_coef_matrix(fit_full)
+  coef_full <- .build_khb_coef_matrix(fit_full)
 
   # -------------------------------------------------------------------------
   # Step 4: Decompose
@@ -334,8 +340,8 @@ khb_decompose <- function(data,
   results_list <- list()
 
   for (x in key_vars) {
-    cn_reduced <- .khb_match_names(x, rownames(coef_reduced))
-    cn_full    <- .khb_match_names(x, rownames(coef_full))
+    cn_reduced <- .match_khb_names(x, rownames(coef_reduced))
+    cn_full    <- .match_khb_names(x, rownames(coef_full))
     cn <- intersect(cn_reduced, cn_full)
 
     if (length(cn) == 0) {
@@ -349,17 +355,22 @@ khb_decompose <- function(data,
       b_direct  <- coef_full[nm, "coef"]
       se_direct <- coef_full[nm, "se"]
       b_indirect <- b_total - b_direct
-      se_indirect <- sqrt(se_total^2 + se_direct^2)
+      se_indirect <- sqrt(se_total^2 + se_direct^2)  # conservative
 
       conf_ratio <- if (abs(b_direct) > 1e-10) b_total / b_direct else NA_real_
       conf_pct <- if (abs(b_total) > 1e-10) 100 * (b_total - b_direct) / b_total else NA_real_
 
       results_list[[nm]] <- data.frame(
-        variable = x, coefficient = nm,
-        total_effect = b_total, total_se = se_total,
-        direct_effect = b_direct, direct_se = se_direct,
-        indirect_effect = b_indirect, indirect_se = se_indirect,
-        conf_ratio = conf_ratio, conf_pct = conf_pct,
+        variable = x,
+        coefficient = nm,
+        total_effect = b_total,
+        total_se = se_total,
+        direct_effect = b_direct,
+        direct_se = se_direct,
+        indirect_effect = b_indirect,
+        indirect_se = se_indirect,
+        conf_ratio = conf_ratio,
+        conf_pct = conf_pct,
         stringsAsFactors = FALSE
       )
     }
@@ -375,17 +386,23 @@ khb_decompose <- function(data,
   # Z effects from full model
   z_effects_list <- list()
   for (z in z_vars) {
-    z_names <- .khb_match_names(z, rownames(coef_full))
+    z_names <- .match_khb_names(z, rownames(coef_full))
     for (zn in z_names) {
       z_effects_list[[zn]] <- data.frame(
         variable = z, coefficient = zn,
-        estimate = coef_full[zn, "coef"], se = coef_full[zn, "se"],
-        z_stat = coef_full[zn, "z"], p_value = coef_full[zn, "p"],
+        estimate = coef_full[zn, "coef"],
+        se = coef_full[zn, "se"],
+        z_stat = coef_full[zn, "z"],
+        p_value = coef_full[zn, "p"],
         stringsAsFactors = FALSE
       )
     }
   }
-  z_effects <- if (length(z_effects_list) > 0) do.call(rbind, z_effects_list) else data.frame()
+  z_effects <- if (length(z_effects_list) > 0) {
+    do.call(rbind, z_effects_list)
+  } else {
+    data.frame()
+  }
   rownames(z_effects) <- NULL
 
   # -------------------------------------------------------------------------
@@ -414,4 +431,40 @@ khb_decompose <- function(data,
     n_obs = fit_full$n_obs,
     n_groups = fit_full$n_groups
   )
+}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for KHB
+# ---------------------------------------------------------------------------
+
+#' @keywords internal
+.build_khb_coef_matrix <- function(fit) {
+  cf <- coef(fit)
+  se <- if (!is.null(fit$se_robust)) fit$se_robust else fit$se
+  z_val <- cf / se
+  p_val <- 2 * stats::pnorm(-abs(z_val))
+  mat <- cbind(cf, se, z_val, p_val)
+  colnames(mat) <- c("coef", "se", "z", "p")
+  rownames(mat) <- names(cf)
+  mat
+}
+
+#' @keywords internal
+.match_khb_names <- function(var_name, coef_names) {
+  # Exact match
+  if (var_name %in% coef_names) return(var_name)
+  # Interaction match
+  if (grepl(":", var_name)) {
+    parts <- strsplit(var_name, ":")[[1]]
+    matches <- vapply(coef_names, function(cn) {
+      cn_parts <- strsplit(cn, ":")[[1]]
+      if (length(cn_parts) != length(parts)) return(FALSE)
+      all(mapply(function(p, cp) startsWith(cp, p), parts, cn_parts))
+    }, logical(1))
+    return(coef_names[matches])
+  }
+  # Prefix match (factor dummies)
+  matches <- coef_names[startsWith(coef_names, var_name) & !grepl(":", coef_names)]
+  matches
 }

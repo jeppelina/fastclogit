@@ -65,11 +65,21 @@ summary.fastclogit <- function(object, robust = TRUE, ...) {
   ci <- confint(object, robust = robust)
 
   # Note: cbind(Name = named_vec) can silently drop column names in R 4.5.x.
-  coef_table <- cbind(cf, se, z, p, ci)
-  colnames(coef_table)[1:4] <- c("Estimate", "Std. Error", "z value", "Pr(>|z|)")
+  #
+  # The p-value MUST be the last column. printCoefmat() identifies the p-value
+  # column by position (the last one), not by name. Appending the confidence
+  # interval after `p` made printCoefmat hand the 97.5% bound to symnum(),
+  # which errors with "'x' must be between 0 and 1" for any fit whose upper
+  # bound falls outside [0, 1] — and, worse, prints silently wrong
+  # significance stars for any fit where it happens not to. Reported by Ben
+  # 2026-09-22. The CI is kept in a separate element for tidy_fastclogit()
+  # and for callers who want it.
+  coef_table <- cbind(cf, se, z, p)
+  colnames(coef_table) <- c("Estimate", "Std. Error", "z value", "Pr(>|z|)")
 
   out <- list(
     coef_table = coef_table,
+    conf_int   = ci,
     loglik     = object$loglik,
     n_obs      = object$n_obs,
     n_groups   = object$n_groups,
@@ -77,6 +87,8 @@ summary.fastclogit <- function(object, robust = TRUE, ...) {
     converged  = object$converged,
     iterations = object$iterations,
     se_type    = se_type,
+    convergence_criterion = object$convergence_criterion,
+    convergence_message   = object$convergence_message,
     call       = object$call
   )
   class(out) <- "summary.fastclogit"
@@ -97,11 +109,16 @@ print.summary.fastclogit <- function(x, digits = 4, ...) {
         " (", x$se_type, " SEs)\n", sep = "")
   }
   cat("  Log-likelihood: ", format(x$loglik, digits = 8), "\n")
-  cat("  Converged:    ", x$converged, " (", x$iterations, " iterations)\n\n", sep = "")
+  cat("  Converged:    ", x$converged, " (", x$iterations, " iterations",
+      if (!is.null(x$convergence_criterion))
+        paste0(", via ", x$convergence_criterion) else "",
+      ")\n\n", sep = "")
 
   cat("Coefficients:\n")
+  # cs.ind = 1:2 (estimate, SE), tst.ind = 3 (z), p-value is the last column.
   printCoefmat(x$coef_table, digits = digits, signif.stars = TRUE,
-               has.Pvalue = TRUE, P.values = TRUE, cs.ind = 1:2)
+               has.Pvalue = TRUE, P.values = TRUE,
+               cs.ind = 1:2, tst.ind = 3L)
   cat("---\n")
   cat("SE type:", x$se_type, "\n")
   invisible(x)

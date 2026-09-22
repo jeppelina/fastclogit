@@ -13,6 +13,12 @@ fclogit(
   drop_collinear = TRUE,
   max_iter = 25L,
   tol = 1e-06,
+  tier3_enable = TRUE,
+  tier3_plateau_tol = 1e-09,
+  tier3_plateau_iters = 3L,
+  tier3_grad_floor = 0.01,
+  tier3_halving_floor = 2L,
+  tier3_step_floor = 0.001,
   verbose = FALSE,
   na.action = "na.exclude"
 )
@@ -46,6 +52,9 @@ before fitting.}
 
 \item{tol}{Numeric. Convergence tolerance on the maximum absolute gradient
 element (default 1e-6).}
+
+\item{tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor}{Tier-3 (log-likelihood plateau) convergence controls, passed straight
+through to \code{\link{fastclogit}}. See that function's documentation.}
 
 \item{verbose}{Logical. If \code{TRUE}, prints progress during fitting.}
 

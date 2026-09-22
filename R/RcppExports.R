@@ -5,12 +5,12 @@ clogit_loglik_cpp <- function(X, chosen, offset, group_start, group_size, max_it
     .Call(`_fastclogit_clogit_loglik_cpp`, X, chosen, offset, group_start, group_size, max_iter, tol)
 }
 
-clogit_fit_cpp <- function(X, chosen, offset, group_start, group_size, max_iter, tol, verbose) {
-    .Call(`_fastclogit_clogit_fit_cpp`, X, chosen, offset, group_start, group_size, max_iter, tol, verbose)
+clogit_fit_cpp <- function(X, chosen, offset, group_start, group_size, max_iter, tol, tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor, verbose) {
+    .Call(`_fastclogit_clogit_fit_cpp`, X, chosen, offset, group_start, group_size, max_iter, tol, tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor, verbose)
 }
 
-clogit_fit_sparse_cpp <- function(X_csc, chosen, offset, group_start, group_size, max_iter, tol, verbose) {
-    .Call(`_fastclogit_clogit_fit_sparse_cpp`, X_csc, chosen, offset, group_start, group_size, max_iter, tol, verbose)
+clogit_fit_sparse_cpp <- function(X_csc, chosen, offset, group_start, group_size, max_iter, tol, tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor, verbose) {
+    .Call(`_fastclogit_clogit_fit_sparse_cpp`, X_csc, chosen, offset, group_start, group_size, max_iter, tol, tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor, verbose)
 }
 
 clogit_sandwich_cpp <- function(X, chosen, offset, group_start, group_size, cluster_id, beta, hess_inv) {

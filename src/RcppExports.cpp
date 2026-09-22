@@ -29,8 +29,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // clogit_fit_cpp
-Rcpp::List clogit_fit_cpp(const arma::mat& X, const arma::ivec& chosen, const arma::vec& offset, const arma::ivec& group_start, const arma::ivec& group_size, int max_iter, double tol, bool verbose);
-RcppExport SEXP _fastclogit_clogit_fit_cpp(SEXP XSEXP, SEXP chosenSEXP, SEXP offsetSEXP, SEXP group_startSEXP, SEXP group_sizeSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP verboseSEXP) {
+Rcpp::List clogit_fit_cpp(const arma::mat& X, const arma::ivec& chosen, const arma::vec& offset, const arma::ivec& group_start, const arma::ivec& group_size, int max_iter, double tol, bool tier3_enable, double tier3_plateau_tol, int tier3_plateau_iters, double tier3_grad_floor, int tier3_halving_floor, double tier3_step_floor, bool verbose);
+RcppExport SEXP _fastclogit_clogit_fit_cpp(SEXP XSEXP, SEXP chosenSEXP, SEXP offsetSEXP, SEXP group_startSEXP, SEXP group_sizeSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP tier3_enableSEXP, SEXP tier3_plateau_tolSEXP, SEXP tier3_plateau_itersSEXP, SEXP tier3_grad_floorSEXP, SEXP tier3_halving_floorSEXP, SEXP tier3_step_floorSEXP, SEXP verboseSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -41,14 +41,20 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::ivec& >::type group_size(group_sizeSEXP);
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< bool >::type tier3_enable(tier3_enableSEXP);
+    Rcpp::traits::input_parameter< double >::type tier3_plateau_tol(tier3_plateau_tolSEXP);
+    Rcpp::traits::input_parameter< int >::type tier3_plateau_iters(tier3_plateau_itersSEXP);
+    Rcpp::traits::input_parameter< double >::type tier3_grad_floor(tier3_grad_floorSEXP);
+    Rcpp::traits::input_parameter< int >::type tier3_halving_floor(tier3_halving_floorSEXP);
+    Rcpp::traits::input_parameter< double >::type tier3_step_floor(tier3_step_floorSEXP);
     Rcpp::traits::input_parameter< bool >::type verbose(verboseSEXP);
-    rcpp_result_gen = Rcpp::wrap(clogit_fit_cpp(X, chosen, offset, group_start, group_size, max_iter, tol, verbose));
+    rcpp_result_gen = Rcpp::wrap(clogit_fit_cpp(X, chosen, offset, group_start, group_size, max_iter, tol, tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor, verbose));
     return rcpp_result_gen;
 END_RCPP
 }
 // clogit_fit_sparse_cpp
-Rcpp::List clogit_fit_sparse_cpp(const arma::sp_mat& X_csc, const arma::ivec& chosen, const arma::vec& offset, const arma::ivec& group_start, const arma::ivec& group_size, int max_iter, double tol, bool verbose);
-RcppExport SEXP _fastclogit_clogit_fit_sparse_cpp(SEXP X_cscSEXP, SEXP chosenSEXP, SEXP offsetSEXP, SEXP group_startSEXP, SEXP group_sizeSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP verboseSEXP) {
+Rcpp::List clogit_fit_sparse_cpp(const arma::sp_mat& X_csc, const arma::ivec& chosen, const arma::vec& offset, const arma::ivec& group_start, const arma::ivec& group_size, int max_iter, double tol, bool tier3_enable, double tier3_plateau_tol, int tier3_plateau_iters, double tier3_grad_floor, int tier3_halving_floor, double tier3_step_floor, bool verbose);
+RcppExport SEXP _fastclogit_clogit_fit_sparse_cpp(SEXP X_cscSEXP, SEXP chosenSEXP, SEXP offsetSEXP, SEXP group_startSEXP, SEXP group_sizeSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP tier3_enableSEXP, SEXP tier3_plateau_tolSEXP, SEXP tier3_plateau_itersSEXP, SEXP tier3_grad_floorSEXP, SEXP tier3_halving_floorSEXP, SEXP tier3_step_floorSEXP, SEXP verboseSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -59,8 +65,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::ivec& >::type group_size(group_sizeSEXP);
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< bool >::type tier3_enable(tier3_enableSEXP);
+    Rcpp::traits::input_parameter< double >::type tier3_plateau_tol(tier3_plateau_tolSEXP);
+    Rcpp::traits::input_parameter< int >::type tier3_plateau_iters(tier3_plateau_itersSEXP);
+    Rcpp::traits::input_parameter< double >::type tier3_grad_floor(tier3_grad_floorSEXP);
+    Rcpp::traits::input_parameter< int >::type tier3_halving_floor(tier3_halving_floorSEXP);
+    Rcpp::traits::input_parameter< double >::type tier3_step_floor(tier3_step_floorSEXP);
     Rcpp::traits::input_parameter< bool >::type verbose(verboseSEXP);
-    rcpp_result_gen = Rcpp::wrap(clogit_fit_sparse_cpp(X_csc, chosen, offset, group_start, group_size, max_iter, tol, verbose));
+    rcpp_result_gen = Rcpp::wrap(clogit_fit_sparse_cpp(X_csc, chosen, offset, group_start, group_size, max_iter, tol, tier3_enable, tier3_plateau_tol, tier3_plateau_iters, tier3_grad_floor, tier3_halving_floor, tier3_step_floor, verbose));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -103,8 +115,8 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_fastclogit_clogit_loglik_cpp", (DL_FUNC) &_fastclogit_clogit_loglik_cpp, 7},
-    {"_fastclogit_clogit_fit_cpp", (DL_FUNC) &_fastclogit_clogit_fit_cpp, 8},
-    {"_fastclogit_clogit_fit_sparse_cpp", (DL_FUNC) &_fastclogit_clogit_fit_sparse_cpp, 8},
+    {"_fastclogit_clogit_fit_cpp", (DL_FUNC) &_fastclogit_clogit_fit_cpp, 14},
+    {"_fastclogit_clogit_fit_sparse_cpp", (DL_FUNC) &_fastclogit_clogit_fit_sparse_cpp, 14},
     {"_fastclogit_clogit_sandwich_cpp", (DL_FUNC) &_fastclogit_clogit_sandwich_cpp, 8},
     {"_fastclogit_clogit_sandwich_sparse_cpp", (DL_FUNC) &_fastclogit_clogit_sandwich_sparse_cpp, 8},
     {NULL, NULL, 0}

@@ -1,3 +1,115 @@
+# fastclogit 0.5.0
+
+Brings the package up to the kernel the papers have been running since
+September 2026. Everything below already existed in
+`Paper 4/MONA scripts/lib/` and its byte-identical copies in Papers 1 and 3;
+this release is the merge back, plus two bugs found on the way.
+
+## Bug fixes (correctness)
+
+* **The line search was skipped on the first Newton iteration.** Starting from
+  beta = 0 on a problem with a McFadden-Manski offset of wide within-stratum
+  spread, the opening step can be enormous: in Paper 4 it had norm ~900 and
+  drove the log-likelihood from -5.5e6 to -4.1e8, into a region where the
+  softmax saturates, the observed information collapses toward zero and the
+  Newton direction stops being an ascent direction. The gradient then sat
+  frozen at 3.95e+06 for ninety iterations. The line search now runs on every
+  iteration.
+
+* **A step that improved nothing was accepted anyway.** The halving loop exited
+  either on improvement or on exhausting 20 halvings, and `beta = beta_new` ran
+  unconditionally afterwards, so once no improving step existed the optimiser
+  took a tiny downhill step every iteration. It now stops and reports
+  `convergence_criterion = "line_search"` instead of grinding to the cap.
+
+* **The line-search acceptance tolerance is now scaled to |loglik|.** A fixed
+  `1e-10` is below one unit in the last place once `|loglik|` passes about
+  4.5e5: at -4.26e6 an ulp is 9.5e-10, so near the optimum the test compared
+  rounding noise and could never register an improvement. That produced 20
+  halvings on every iteration in fits that were already finished.
+
+* **A flat optimum is no longer reported as a failure.** When the line search
+  cannot improve, the gradient decides: below `tier3_grad_floor` the fit is at
+  a maximum and converges with `convergence_criterion = "flat_optimum"`; above
+  it the Newton direction has genuinely died and the fit stops. The first
+  version of the guard broke unconditionally and mislabelled finished fits,
+  which cost a men's KHB decomposition on 2026-09-12.
+
+* **`$coefficients` is now the best-loglik beta**, with the gradient, Hessian
+  and log-likelihood recomputed there, matching `survival::clogit`. Previously
+  the loop-terminating beta was returned, which differs whenever step-halving
+  overshoots at the tail.
+
+* **The final variance matrix no longer throws on a rank-deficient design.**
+  `inv_sympd(-hess)` was unguarded, so aliased columns or separation on rare
+  cells killed the fit at the last step even when every identified coefficient
+  was already correct. It now mirrors the in-iteration adaptive ridge, falls
+  back to a pseudoinverse, and sets `$vcov_singular`.
+
+* **`summary()` printed wrong significance stars, or errored.** The confidence
+  interval was appended after the p-value in the coefficient table, and
+  `printCoefmat()` takes the LAST column as the p-value. Any fit with a CI
+  bound outside [0, 1] failed with `symnum(): 'x' must be between 0 and 1`;
+  any fit without one printed stars computed from the interval bound. The
+  interval now lives in `$conf_int` and the printed table ends with the
+  p-value. Reported by Ben Jarvis.
+
+* **Every fit emitted a spurious `NAs introduced by coercion to integer range`
+  warning.** The per-iteration trace used `NA_INTEGER` as its
+  "no preceding step" sentinel; under `ARMA_64BIT_WORD` that reaches R as a
+  double holding INT_MIN, which is outside R's integer range. The kernel now
+  sends -1 and `fastclogit()` maps it to NA.
+
+## New
+
+* **Explicit convergence reporting.** `$convergence_criterion` is one of
+  `primary`, `secondary`, `plateau`, `flat_optimum`, `iter_max` or
+  `line_search`, with a human-readable `$convergence_message`,
+  `$best_loglik_iter`, and `$iter_log`: one row per Newton iteration with
+  loglik, max|gradient|, relative loglik change, step size, halving count and
+  which tier fired. `summary()` prints the route.
+
+* **Tier-3 plateau convergence**, replacing the old stall detector. It matches
+  `survival::clogit`'s relative-log-likelihood criterion (1e-9) but adds three
+  guardrails so it cannot fire on a clearly unconverged problem: persistence
+  over consecutive iterations, a gradient floor, and evidence that the
+  optimiser is actually struggling. Controlled by the six new `tier3_*`
+  arguments to `fastclogit()` and `fclogit()`; set `tier3_enable = FALSE` for
+  pure gradient-based convergence.
+
+* **An nnz guard on the sparse path.** The CSR view indexes with `int`, so more
+  than 2^31-1 non-zeros would silently overflow `row_ptr`. `ARMA_64BIT_WORD`
+  does not cover this: it raises the virtual-cell ceiling, not this one.
+  Checked both in `CsrMatrix` and R-side, where the message names the count.
+
+* **`mona/` is now generated from `src/`** by `tools/make_mona_bundle.R`, and
+  `tests/testthat/test-mona-bundle.R` fails if the committed bundle is stale.
+  The two trees had drifted apart by hand: `clogit_sandwich_sparse.cpp` was 36
+  lines longer in `mona/` than in `src/`, and the R files disagreed on
+  namespace qualification.
+
+* **New test files** covering the convergence regressions above, dense/sparse
+  agreement computed live rather than against a cached reference, and the two
+  reported bugs. The sparse-validation reference fits were regenerated with
+  this kernel and now record the convergence route and final gradient, not
+  just the coefficients: a reference that stores only coefficients would have
+  looked healthy throughout the entire line-search-defect era.
+
+## Known limitations
+
+* A covariate constant **within** every stratum but varying across strata (an
+  ego-side covariate in a one-sided choice model) is not identified in
+  conditional logit, but passes the zero-variance screen, which uses global
+  variance. `survival::clogit` returns NA for such terms; this package returns
+  a ridge-determined value with a meaningless standard error, and
+  `$vcov_singular` does **not** flag it, because the ridge rescues the
+  inversion before it can. Drop such columns before fitting. See
+  `Research/FASTCLOGIT_MERGE_MAP.md` section 5a.
+
+* The dense/sparse divergence observed in Paper 3 at n=100 (dense converging to
+  a log-likelihood 271 units below sparse and `survival`, never reproduced
+  locally) has not been retested since the line-search fix.
+
 # fastclogit 0.4.3
 
 ## Bug fixes
