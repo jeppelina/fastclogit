@@ -141,6 +141,42 @@ Monte Carlo standard errors; cluster-robust SEs match `survival` to 0.2% and
 recover an analytically known inflation factor of 2.000 to within 0.002; and the
 KHB decomposition recovers a known mediation structure.
 
+## Convergence at production scale
+
+* **The plateau rule's gradient ceiling now scales with the log-likelihood.**
+  It was a fixed `tier3_grad_floor = 1e-2`. The gradient is a sum of N terms,
+  so the smallest value it can attain is set by floating-point accumulation
+  over those terms rather than by the optimiser, and a function computed to
+  relative accuracy eps locates its stationary point to about `sqrt(eps)` in
+  the gradient. Measured on one specification over nested subsamples: the
+  attainable floor is 8.3e-05 at 844,031 rows, 1.7e-03 at 8,440,878 and
+  2.0e-02 at 84,407,382 -- flat at 1.7e-09 to 4.2e-09 of `|loglik|`.
+
+  A fixed absolute ceiling therefore asks a large problem for a precision that
+  does not exist in its arithmetic: at full scale a fit sat at 2.02e-02 against
+  a ceiling of 1e-02 and no rule could fire, while the identical specification
+  cleared the same ceiling comfortably at a tenth of the data.
+
+  The ceiling is now `max(tier3_grad_floor, 1e-8 * |loglik|)`, in the plateau
+  rule and in the line-search escape hatch that uses the same threshold for the
+  same judgement. `max()`, never a replacement: at this package's own sanity
+  check (loglik -97.14) the relative rule gives 9.7e-07 against an absolute
+  1e-06, so a bare swap would silently *tighten* small fits.
+
+  Only the plateau ceiling scales. `tol` does not, because scaling it also
+  scales the secondary criterion's gradient test of `tol * 10`, which gave away
+  real precision on fits that were never failing.
+
+  Verified as a strict no-op for anything that already converged: 25 fits
+  across dense, sparse, clustered, wide-offset and tight-tolerance paths --
+  including one that converges via the plateau rule itself -- are bit-identical
+  before and after, in route, iteration count, log-likelihood and coefficients.
+
+  This does not weaken the line-search guard added earlier in this release.
+  That caught a fit walking downhill at 0.14 of log-likelihood per iteration,
+  a gradient nowhere near 1e-08 of it, and the plateau rule's other conditions
+  are untouched.
+
 ## Known limitations
 
 * A covariate constant **within** every stratum but varying across strata (an

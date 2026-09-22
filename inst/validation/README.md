@@ -117,11 +117,24 @@ convergence ladder needed extra tiers. At the scales reachable here that is
 simply not true: the floor measured 8e-14 to 3e-9 over 2,000 to 200,000 strata,
 is not monotone in n, and sits far below the 1e-6 default.
 
-The kernel comments record a floor of ~0.003 at 75M+ rows. That is three orders
-of magnitude beyond anything reproducible on one machine, so it can be neither
-confirmed nor refuted here, and the documentation attributes it to production
-experience rather than to this study. No exponent is fitted to four
-non-monotone points.
+The kernel comments record a floor of ~0.003 at 75M+ rows, three orders of
+magnitude beyond anything reproducible on one machine. No exponent is fitted to
+four non-monotone points here.
+
+**Resolved elsewhere, 2026-09-22.** Paper 4 measured the floor directly on one
+specification over nested subsamples: 8.3e-05 at 844,031 rows, 1.7e-03 at
+8,440,878, and 2.0e-02 at 84,407,382. Divided by |loglik| those are flat at
+1.7e-09, 3.5e-09 and 4.2e-09 -- the textbook result that a function computed to
+relative accuracy eps locates its stationary point to about sqrt(eps) in the
+gradient, sqrt(2.2e-16) being 1.5e-08.
+
+So the hypothesis is right, and the reason this study could not see it is that
+the effect only emerges two orders of magnitude above the largest problem that
+fits here. The floor is not a function of n as such: it is a fixed fraction of
+|loglik|, and |loglik| grows with n. The plateau rule's gradient ceiling is
+scaled accordingly as of v0.5.0. This is a good illustration of the limit of
+single-machine simulation for a package whose whole purpose is data that does
+not fit on one.
 
 ## Two simulation designs that were wrong, and why
 

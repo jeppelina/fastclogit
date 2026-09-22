@@ -53,6 +53,39 @@
 #include <limits>
 // [[Rcpp::depends(RcppArmadillo)]]
 
+// -----------------------------------------------------------------------
+// Scale of the gradient test.  [ported from Paper 4, 2026-09-22]
+//
+// The gradient is a sum of N terms, so the smallest value it can attain is set
+// by floating-point accumulation over those N terms, not by the optimiser.
+// Measured on Paper 4's M1 women, one specification, nested subsamples:
+//
+//     844,031 rows   attainable max|grad| = 8.3e-05
+//   8,440,878 rows                          1.7e-03
+//  84,407,382 rows                          2.0e-02
+//
+// Divided by |loglik| those are flat at 1.7e-09, 3.5e-09 and 4.2e-09: the
+// textbook result that a function computed to relative accuracy eps locates
+// its stationary point to about sqrt(eps) in the gradient, sqrt(2.2e-16) being
+// 1.5e-08. A fixed absolute floor therefore asks a large problem for a
+// precision that does not exist in its arithmetic.
+//
+// So the plateau rule's gradient ceiling is the LARGER of the caller's
+// absolute value and this relative one. max(), never a replacement: at small
+// scale the relative rule is the STRICTER of the two (this package's own
+// sanity check runs at loglik -97.14, where 1e-8*|loglik| = 9.7e-07 against an
+// absolute 1e-06), and silently tightening small fits is not the intent.
+//
+// ONLY the plateau floor scales, not `tol`. Scaling `tol` also scales the
+// SECONDARY criterion's gradient test of tol*10, which cost real precision on
+// fits that were never failing.
+//
+// This does not weaken the 2026-09-11 line-search guard: the failure that
+// caught was a fit walking downhill at 0.14 of log-likelihood per iteration,
+// a gradient nowhere near 1e-08 of it.
+// -----------------------------------------------------------------------
+static const double GRAD_REL_TOL = 1e-8;
+
 // [[Rcpp::export]]
 Rcpp::List clogit_fit_cpp(
     const arma::mat& X,            // n x p design matrix
@@ -192,7 +225,8 @@ Rcpp::List clogit_fit_cpp(
         // PLATEAU — survival-style loglik plateau with side conditions
         else if (iter > 0 && tier3_enable &&
                  rel_ll_change < tier3_plateau_tol &&
-                 grad_max      < tier3_grad_floor &&
+                 grad_max      < std::max(tier3_grad_floor,
+                                          GRAD_REL_TOL * std::fabs(loglik_new)) &&
                  (prev_halving_count >= tier3_halving_floor ||
                   prev_step_size      <  tier3_step_floor)) {
             plateau_count++;
@@ -353,13 +387,15 @@ Rcpp::List clogit_fit_cpp(
             //
             // tier3_grad_floor is the same ceiling the plateau rule uses for
             // exactly this judgement, so the two agree by construction.
-            if (grad_max < tier3_grad_floor) {
+            const double ls_grad_floor = std::max(tier3_grad_floor,
+                                          GRAD_REL_TOL * std::fabs(loglik));
+            if (grad_max < ls_grad_floor) {
                 converged        = true;
                 convergence_code = 6;
                 if (verbose) {
                     Rprintf("  Line search cannot improve and max|grad| = %.2e is below the "
                             "floor (%.2e).\n  At a flat optimum; treating as converged.\n",
-                            grad_max, tier3_grad_floor);
+                            grad_max, ls_grad_floor);
                 }
             } else {
                 convergence_code = 5;
